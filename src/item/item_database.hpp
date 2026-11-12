@@ -11,6 +11,8 @@
 namespace item {
 class ItemDatabase : public utils::Singleton<ItemDatabase> {
 public:
+    static constexpr std::uint16_t MAX_SUPPORTED_VERSION{ 27 };
+
     [[nodiscard]] bool load_from_file(const std::string& file_path);
 
     [[nodiscard]] bool parse(std::span<const std::byte> data);

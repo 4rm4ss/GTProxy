@@ -24,106 +24,125 @@ std::string ItemDatabase::decrypt_item_name(std::string_view encrypted, std::uin
 std::optional<ItemInfo> ItemDatabase::parse_item(utils::ByteStream<>& bs) const
 {
     ItemInfo item{};
+    bool ok{ true };
+    const auto read_field{ [&bs, &ok](auto& value) { ok = bs.read(value) && ok; } };
 
-    bs.read(item.item_id);
-    bs.read(item.flags);
-    bs.read(item.item_type);
-    bs.read(item.material);
+    read_field(item.item_id);
+    read_field(item.flags);
+    read_field(item.item_type);
+    read_field(item.material);
 
-    bs.read(item.item_name);
+    read_field(item.item_name);
     item.item_name = decrypt_item_name(item.item_name, item.item_id);
 
-    bs.read(item.texture_file_path);
-    bs.read(item.texture_file_hash);
+    read_field(item.texture_file_path);
+    read_field(item.texture_file_hash);
 
-    bs.read(item.visual_effect);
-    bs.read(item.cooking_time);
+    read_field(item.visual_effect);
+    read_field(item.cooking_time);
 
-    bs.read(item.texture_coord_x);
-    bs.read(item.texture_coord_y);
+    read_field(item.texture_coord_x);
+    read_field(item.texture_coord_y);
 
-    bs.read(item.texture_type);
+    read_field(item.texture_type);
 
-    bs.read(item.is_stripey_wallpaper);
+    read_field(item.is_stripey_wallpaper);
 
-    bs.read(item.collision_type);
+    read_field(item.collision_type);
 
-    bs.read(item.health);
-    bs.read(item.reset_time);
+    read_field(item.health);
+    read_field(item.reset_time);
 
-    bs.read(item.clothing_type);
+    read_field(item.clothing_type);
 
-    bs.read(item.rarity);
-    bs.read(item.max_amount);
+    read_field(item.rarity);
+    read_field(item.max_amount);
 
-    bs.read(item.extra_file);
-    bs.read(item.extra_file_hash);
+    read_field(item.extra_file);
+    read_field(item.extra_file_hash);
 
-    bs.read(item.animation_time);
+    read_field(item.animation_time);
 
-    bs.read(item.pet_name);
-    bs.read(item.pet_prefix);
-    bs.read(item.pet_suffix);
-    bs.read(item.pet_ability);
+    read_field(item.pet_name);
+    read_field(item.pet_prefix);
+    read_field(item.pet_suffix);
+    read_field(item.pet_ability);
 
-    bs.read(item.seed_base);
-    bs.read(item.seed_overlay);
-    bs.read(item.tree_base);
-    bs.read(item.tree_leaves);
-    bs.read(item.seed_color);
-    bs.read(item.seed_overlay_color);
-    bs.read(item.ingredient);
-    bs.read(item.grow_time);
+    read_field(item.seed_base);
+    read_field(item.seed_overlay);
+    read_field(item.tree_base);
+    read_field(item.tree_leaves);
+    read_field(item.seed_color);
+    read_field(item.seed_overlay_color);
+    read_field(item.ingredient);
+    read_field(item.grow_time);
 
-    bs.read(item.fx_flag);
+    read_field(item.fx_flag);
 
-    bs.read(item.animating_coordinates);
-    bs.read(item.animating_texture_file);
-    bs.read(item.animating_coordinates_2);
+    read_field(item.animating_coordinates);
+    read_field(item.animating_texture_file);
+    read_field(item.animating_coordinates_2);
 
-    bs.read(item.__unk_1);
-    bs.read(item.__unk_2);
+    read_field(item.__unk_1);
+    read_field(item.__unk_2);
 
-    bs.read(item.flags_2);
+    read_field(item.flags_2);
 
-    bs.read(item.__unk_3);
+    read_field(item.__unk_3);
 
-    bs.read(item.tile_range);
+    read_field(item.tile_range);
 
-    bs.read(item.vault_capacity);
+    read_field(item.vault_capacity);
 
-    bs.read(item.punch_options);
+    read_field(item.punch_options);
 
-    bs.read(item.__unk_4);
+    read_field(item.__unk_4);
 
-    bs.read(item.body_part_list);
+    read_field(item.body_part_list);
 
-    bs.read(item.light_range);
+    read_field(item.light_range);
 
-    bs.read(item.__unk_5);
+    read_field(item.__unk_5);
 
-    bs.read(item.can_sit);
-    bs.read(item.player_offset_x);
-    bs.read(item.player_offset_y);
-    bs.read(item.chair_texture_x);
-    bs.read(item.chair_texture_y);
-    bs.read(item.chair_leg_offset_x);
-    bs.read(item.chair_leg_offset_y);
-    bs.read(item.chair_texture_file);
-    bs.read(item.renderer_data_file);
+    read_field(item.can_sit);
+    read_field(item.player_offset_x);
+    read_field(item.player_offset_y);
+    read_field(item.chair_texture_x);
+    read_field(item.chair_texture_y);
+    read_field(item.chair_leg_offset_x);
+    read_field(item.chair_leg_offset_y);
+    read_field(item.chair_texture_file);
+    read_field(item.renderer_data_file);
 
-    bs.read(item.__unk_6);
-    bs.read(item.renderer_data_file_hash);
+    read_field(item.__unk_6);
+    read_field(item.renderer_data_file_hash);
 
-    bs.read(item.__unk_7);
-    bs.read(item.__unk_8);
+    read_field(item.__unk_7);
+    read_field(item.__unk_8);
 
-    bs.read(item.info);
+    read_field(item.info);
 
-    bs.read(item.ingredients);
+    read_field(item.ingredients);
 
     if (version_ >= 24) {
-        bs.read(item.__unk_9);
+        read_field(item.__unk_9);
+    }
+
+    if (version_ >= 25) {
+        read_field(item.hit_sound_file);
+        read_field(item.hit_sound_file_hash);
+    }
+
+    if (version_ >= 26) {
+        read_field(item.__unk_10);
+    }
+
+    if (version_ >= 27) {
+        read_field(item.__unk_11);
+    }
+
+    if (!ok) {
+        return std::nullopt;
     }
 
     return item;
@@ -162,8 +181,8 @@ bool ItemDatabase::parse(std::span<const std::byte> data)
 
     spdlog::info("Parsing items.dat: version={}, count={}", version_, count_);
 
-    if (version_ > 24) {
-        spdlog::warn("Unsupported items.dat version: {}, max supported is 24", version_);
+    if (version_ > MAX_SUPPORTED_VERSION) {
+        spdlog::warn("Unsupported items.dat version: {}, max supported is {}", version_, MAX_SUPPORTED_VERSION);
         // Don't fail, just warn - parsing might still work for newer versions
     }
 
@@ -182,6 +201,14 @@ bool ItemDatabase::parse(std::span<const std::byte> data)
         }
 
         items_.push_back(std::move(item));
+    }
+
+    if (bs.get_read_offset() != bs.get_size()) {
+        spdlog::warn(
+            "items.dat has {} trailing bytes after parsing (version {}), format may have changed",
+            bs.get_size() - bs.get_read_offset(),
+            version_
+        );
     }
 
     spdlog::info("Successfully parsed {} items from items.dat", items_.size());
