@@ -73,7 +73,8 @@ public:
 
     bool read_data(void* ptr, const std::size_t size)
     {
-        if (get_size() - read_offset_ < size) {
+        if (get_remaining() < size) {
+            failed_ = true;
             return false;
         }
 
@@ -90,7 +91,8 @@ public:
             }
         }
 
-        if (get_size() - read_offset_ < static_cast<std::size_t>(length)) {
+        if (get_remaining() < static_cast<std::size_t>(length)) {
+            failed_ = true;
             return false;
         }
 
@@ -112,7 +114,8 @@ public:
             }
         }
 
-        if (get_size() - read_offset_ < static_cast<std::size_t>(length)) {
+        if (get_remaining() < static_cast<std::size_t>(length)) {
+            failed_ = true;
             return false;
         }
 
@@ -127,9 +130,52 @@ public:
         return *this;
     }
 
-    void backtrack(const std::size_t size) { read_offset_ -= size; }
-    void skip(const std::size_t size) { read_offset_ += size; }
+    bool backtrack(const std::size_t size)
+    {
+        if (size > read_offset_) {
+            read_offset_ = 0;
+            failed_ = true;
+            return false;
+        }
+
+        read_offset_ -= size;
+        return true;
+    }
+
+    bool skip(const std::size_t size)
+    {
+        if (get_remaining() < size) {
+            read_offset_ = get_size();
+            failed_ = true;
+            return false;
+        }
+
+        read_offset_ += size;
+        return true;
+    }
+
     [[nodiscard]] std::size_t get_read_offset() const { return read_offset_; }
+
+    [[nodiscard]] std::size_t get_remaining() const
+    {
+        const auto size{ get_size() };
+        return read_offset_ < size ? size - read_offset_ : 0;
+    }
+
+    // Checks that `count` elements of `element_size` bytes can still fit in the
+    // remaining data. Use before resizing containers from untrusted counts.
+    [[nodiscard]] bool can_read(const std::size_t count, const std::size_t element_size)
+    {
+        if (element_size == 0 || count <= get_remaining() / element_size) {
+            return true;
+        }
+
+        failed_ = true;
+        return false;
+    }
+
+    // False once any read/skip/backtrack has gone out of bounds.
+    [[nodiscard]] bool good() const { return !failed_; }
     
     [[nodiscard]] std::size_t get_size() const
     {
@@ -163,5 +209,6 @@ private:
     std::vector<std::byte> data_vec_;
     std::span<const std::byte> data_span_;
     std::size_t read_offset_;
+    bool failed_{ false };
 };
 }

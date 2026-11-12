@@ -87,10 +87,12 @@ public:
         return version_;
     }
 
-    void serialize(const std::byte* extended_data, const std::size_t extended_data_size)
+    // Returns false if the map data could not be fully parsed (e.g. the world
+    // format changed in a newer game version). Never reads out of bounds.
+    bool serialize(const std::byte* extended_data, const std::size_t extended_data_size)
     {
         if (!extended_data) {
-            return;
+            return false;
         }
 
         utils::ByteStream bs{ extended_data, extended_data_size };
@@ -99,8 +101,11 @@ public:
         bs.skip(4);
         bs.read(name_);
 
-        tile_map_.serialize(bs, version_);
-        object_map_.serialize(bs, version_);
+        if (!bs.good() || !tile_map_.serialize(bs, version_)) {
+            return false;
+        }
+
+        return object_map_.serialize(bs, version_);
     }
 
 private:
