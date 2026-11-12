@@ -63,6 +63,8 @@ inline std::vector<TextRegexPattern>& get_text_regex_patterns()
     return patterns;
 }
 
+inline constexpr std::string_view ON_SUPER_MAIN_START_ACCEPT_LOGON_PREFIX{ "OnSuperMainStartAcceptLogon" };
+
 inline const std::unordered_map<std::string_view, PacketId> VARIANT_FUNCTION_MAP = {
     { "OnSendToServer", PacketId::OnSendToServer },
     { "OnSpawn", PacketId::OnSpawn },
@@ -114,6 +116,12 @@ inline const std::unordered_map<PacketType, PacketId> GAME_PACKET_MAP = {
     const std::string func_name{ payload.function_name() };
     if (const auto it{ VARIANT_FUNCTION_MAP.find(func_name) }; it != VARIANT_FUNCTION_MAP.end()) {
         return it->second;
+    }
+
+    // The logon function carries a random-looking suffix that the server may
+    // change between game versions, so match it by its stable prefix.
+    if (func_name.starts_with(ON_SUPER_MAIN_START_ACCEPT_LOGON_PREFIX)) {
+        return PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a;
     }
 
     return PacketId::Unknown;

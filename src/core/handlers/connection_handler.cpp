@@ -1,9 +1,53 @@
 #include "connection_handler.hpp"
 
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <system_error>
+
 #include "../../packet/game/server.hpp"
 #include "../../packet/game/item_database.hpp"
 
 namespace core::handlers {
+namespace {
+// Locations where an installed Growtopia client keeps its items.dat cache.
+std::vector<std::filesystem::path> game_items_dat_candidates()
+{
+    std::vector<std::filesystem::path> paths;
+
+    if (const char* local_app_data{ std::getenv("LOCALAPPDATA") }) {
+        paths.emplace_back(std::filesystem::path{ local_app_data } / "Growtopia" / "cache" / "items.dat");
+    }
+
+    if (const char* home{ std::getenv("HOME") }) {
+        paths.emplace_back(
+            std::filesystem::path{ home } / "Library" / "Application Support" / "growtopia" / "cache" / "items.dat"
+        );
+    }
+
+    return paths;
+}
+
+std::optional<std::filesystem::path> find_game_items_dat(const std::uint32_t expected_hash)
+{
+    for (const auto& path : game_items_dat_candidates()) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            continue;
+        }
+
+        const auto hash{ static_cast<std::uint32_t>(utils::hash::proton_file(path.string())) };
+        if (hash == expected_hash) {
+            return path;
+        }
+
+        spdlog::debug("Game items.dat at {} has hash {}, expected {}", path.string(), hash, expected_hash);
+    }
+
+    return std::nullopt;
+}
+}
+
 ConnectionHandler::ConnectionHandler(
     event::Dispatcher& dispatcher,
     network::Client& client,
@@ -213,16 +257,37 @@ void ConnectionHandler::setup_on_super_main_start_handler()
             // ReSharper disable once CppVariableCanBeMadeConstexpr
             const std::string cache_path{ "resources/items.dat" };
             const auto server_hash{ static_cast<std::uint32_t>(pkt->item_hash) };
-            const auto cached_hash{ (utils::hash::proton_file(cache_path)) };
+            const auto cached_hash{ static_cast<std::uint32_t>(utils::hash::proton_file(cache_path)) };
 
+            std::string load_path{ cache_path };
             if (server_hash != cached_hash) {
-                spdlog::info("Hash mismatch: server={}, cached={}", server_hash, cached_hash);
-                return;
+                spdlog::info("items.dat hash mismatch: server={}, cached={}", server_hash, cached_hash);
+
+                // The server only sends items.dat when the game client's own copy is
+                // outdated. If the client is already up to date, take its copy instead.
+                const auto game_path{ find_game_items_dat(server_hash) };
+                if (!game_path) {
+                    spdlog::warn(
+                        "No matching items.dat found. If the server does not send one, item data will be "
+                        "unavailable; copy the game's cache/items.dat into resources/ to fix it"
+                    );
+                    return;
+                }
+
+                load_path = game_path->string();
+                spdlog::info("Using game client's items.dat from {}", load_path);
+
+                std::error_code ec;
+                std::filesystem::copy_file(*game_path, cache_path, std::filesystem::copy_options::overwrite_existing, ec);
+                if (ec) {
+                    spdlog::warn("Failed to copy items.dat to {}: {}", cache_path, ec.message());
+                }
+            } else {
+                spdlog::info("Hash matches, loading cached items.dat (hash: {})", cached_hash);
             }
 
-            spdlog::info("Hash matches, loading cached items.dat (hash: {})", cached_hash);
-            if (!item::ItemDatabase::instance().load_from_file(cache_path)) {
-                spdlog::warn("Failed to load cached items.dat");
+            if (!item::ItemDatabase::instance().load_from_file(load_path)) {
+                spdlog::warn("Failed to load items.dat from {}", load_path);
                 return;
             }
 

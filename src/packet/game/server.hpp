@@ -79,11 +79,13 @@ struct OnSendToServer : VariantPacket<PacketId::OnSendToServer> {
 };
 
 struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a> {
-    int32_t item_hash;
+    // Actual function name sent by the server (its suffix can change between versions).
+    std::string function_name{ "OnSuperMainStartAcceptLogonHrdxs47254722215a" };
+    int32_t item_hash{};
     std::string u;
     std::string uu;
     std::string uuu;
-    uint32_t player_tribute_hash;
+    uint32_t player_tribute_hash{};
 
     bool read(const Payload& payload) override
     {
@@ -95,15 +97,17 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
         variant = var->variant;
         game_packet = var->game_packet;
 
-        if (variant.size() < 4) {
+        if (variant.size() < 2) {
             return false;
         }
 
+        function_name = variant.get<std::string>(0);
         item_hash = variant.get<int32_t>(1);
-        u = variant.get<std::string>(2);
-        uu = variant.get<std::string>(3);
-        uuu = variant.get<std::string>(4);
-        player_tribute_hash = variant.get<uint32_t>(5);
+        // Remaining arguments are optional: older/newer servers may send fewer.
+        if (variant.size() > 2) { u = variant.get<std::string>(2); }
+        if (variant.size() > 3) { uu = variant.get<std::string>(3); }
+        if (variant.size() > 4) { uuu = variant.get<std::string>(4); }
+        if (variant.size() > 5) { player_tribute_hash = variant.get<uint32_t>(5); }
 
         return true;
     }
@@ -111,7 +115,7 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
     Payload write() override
     {
         const PacketVariant variant{
-            "OnSuperMainStartAcceptLogonHrdxs47254722215a",
+            function_name,
             item_hash,
             u,
             uu,
