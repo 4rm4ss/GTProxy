@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -30,11 +31,12 @@ namespace utils {
         return false;
     }
 
+    // Output is appended below, so start empty. expected_size comes from the
+    // packet header and is untrusted: only use it as a capped capacity hint.
+    constexpr std::uint32_t max_reserve{ 64u * 1024u * 1024u };
+    decompressed_data.clear();
     if (expected_size > 0) {
-        decompressed_data.resize(expected_size);
-    }
-    else {
-        decompressed_data.clear();
+        decompressed_data.reserve(std::min(expected_size, max_reserve));
     }
 
     std::vector<std::byte> temp_buffer(8192);
@@ -46,15 +48,25 @@ namespace utils {
 
         ret = inflate(&stream, Z_NO_FLUSH);
 
-        if (ret == Z_STREAM_ERROR) {
-            spdlog::error("Decompression stream error");
+        if (ret == Z_STREAM_ERROR || ret == Z_NEED_DICT || ret == Z_DATA_ERROR || ret == Z_MEM_ERROR) {
+            spdlog::error("Decompression failed (error code: {})", ret);
             inflateEnd(&stream);
             return false;
         }
 
         const auto have{ temp_buffer.size() - stream.avail_out };
         decompressed_data.insert(decompressed_data.end(), temp_buffer.begin(), temp_buffer.begin() + have);
-    } while (stream.avail_out == 0);
+
+        if (expected_size > 0 && decompressed_data.size() > expected_size) {
+            spdlog::error(
+                "Decompressed data exceeds expected size ({} > {})",
+                decompressed_data.size(),
+                expected_size
+            );
+            inflateEnd(&stream);
+            return false;
+        }
+    } while (stream.avail_out == 0 && ret != Z_STREAM_END);
 
     inflateEnd(&stream);
 

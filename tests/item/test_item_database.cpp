@@ -232,3 +232,28 @@ TEST(ItemDatabaseTest, ParsesBundledItemsDat)
 
     db.clear();
 }
+
+TEST(ItemDatabaseTest, RejectsImpossibleItemCount)
+{
+    ByteStream<> bs{};
+    bs.write<std::uint16_t>(27);
+    bs.write<std::uint32_t>(0xFFFFFFFFu);
+    bs.write<std::uint32_t>(0);
+    const auto* begin{ bs.get_raw_ptr() };
+    const std::vector<std::byte> data{ begin, begin + bs.get_size() };
+
+    auto& db{ item::ItemDatabase::instance() };
+    EXPECT_FALSE(db.parse(data));
+    EXPECT_TRUE(db.empty());
+}
+
+TEST(ItemDatabaseTest, FailureLeavesDatabaseEmpty)
+{
+    auto data{ build_items_dat(27, TEST_ITEMS) };
+    data.resize(data.size() - 3);
+
+    auto& db{ item::ItemDatabase::instance() };
+    EXPECT_FALSE(db.parse(data));
+    EXPECT_TRUE(db.empty());
+    EXPECT_EQ(db.get_item(0), nullptr);
+}

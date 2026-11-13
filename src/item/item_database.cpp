@@ -186,12 +186,22 @@ bool ItemDatabase::parse(std::span<const std::byte> data)
         // Don't fail, just warn - parsing might still work for newer versions
     }
 
+    // Every item has well over 64 bytes of fixed-size fields; reject counts the
+    // data cannot possibly hold before reserving memory for them.
+    constexpr std::size_t MIN_ITEM_SIZE{ 64 };
+    if (!bs.can_read(count_, MIN_ITEM_SIZE)) {
+        spdlog::error("items.dat item count {} does not fit in {} bytes", count_, data.size());
+        clear();
+        return false;
+    }
+
     items_.reserve(count_);
 
     for (std::uint32_t i = 0; i < count_; ++i) {
         auto item_result{ parse_item(bs) };
         if (!item_result.has_value()) {
-            spdlog::error("Failed to parse item at index {}", i);
+            spdlog::error("Failed to parse item at index {} (items.dat version {}, count {})", i, version_, count_);
+            clear();
             return false;
         }
 

@@ -5,14 +5,17 @@ find_package(fmt REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(glm REQUIRED)
 find_package(magic_enum REQUIRED)
+find_package(ZLIB REQUIRED)
 
 add_executable(GTProxy_tests
     utils/test_text_parse.cpp
     utils/test_byte_stream.cpp
     utils/test_byte_stream_bounds.cpp
+    utils/test_zlib.cpp
     item/test_item_database.cpp
     world/test_world_parsing.cpp
     packet/test_packet_id.cpp
+    packet/test_on_send_to_server.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp)
 
@@ -24,7 +27,8 @@ target_link_libraries(GTProxy_tests PRIVATE
     fmt::fmt
     spdlog::spdlog
     glm::glm
-    magic_enum::magic_enum)
+    magic_enum::magic_enum
+    ZLIB::ZLIB)
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL
