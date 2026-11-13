@@ -122,3 +122,28 @@ TEST_F(WorldParsingTest, GarbageInputNeverCrashes)
         EXPECT_LE(bs.get_read_offset(), data.size());
     }
 }
+
+TEST_F(WorldParsingTest, ParsesObjectPositionsAsFloats)
+{
+    ByteStream<> writer{};
+    for (int i = 0; i < 12; ++i) {
+        writer.write<std::uint8_t>(0);
+    }
+    writer.write<std::uint32_t>(1);     // object count
+    writer.write<std::uint32_t>(1);     // last drop id
+    writer.write<std::uint16_t>(112);   // item id
+    writer.write<float>(32.5f);         // x
+    writer.write<float>(64.25f);        // y
+    writer.write<std::uint8_t>(5);      // amount
+    writer.write<std::uint8_t>(0);      // flags
+    writer.write<std::uint32_t>(1);     // object id
+    const auto data{ to_vector(writer) };
+
+    ByteStream<> bs{ data };
+    WorldObjectMap map{};
+    ASSERT_TRUE(map.serialize(bs, 0));
+    ASSERT_EQ(map.get_objects().size(), 1u);
+    EXPECT_FLOAT_EQ(map.get_objects()[0].pos.x, 32.5f);
+    EXPECT_FLOAT_EQ(map.get_objects()[0].pos.y, 64.25f);
+    EXPECT_EQ(map.get_objects()[0].amount, 5);
+}
