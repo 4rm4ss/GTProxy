@@ -48,6 +48,7 @@ public:
     explicit DnsResolver(std::unique_ptr<DnsProvider> provider);
 
     [[nodiscard]] DnsResult resolve_domain(const std::string& domain) const;
+    [[nodiscard]] static DnsResult resolve_domain(const DnsProvider& provider, const std::string& domain);
     [[nodiscard]] std::string resolve_ip(const std::string& host) const;
 
 private:

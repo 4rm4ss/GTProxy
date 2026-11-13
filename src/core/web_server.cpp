@@ -102,12 +102,18 @@ void WebServer::listen_internal()
             return true;
         }
 
-        httplib::Client cli{ fmt::format("https://{}", resolved_ip) };
+        // Connect to the resolved IP but keep the real host name for TLS SNI and
+        // the Host header, like the game does (system DNS points it at us).
+        httplib::Client cli{ fmt::format("https://{}", server_address) };
+        if (resolved_ip != server_address) {
+            cli.set_hostname_addr_map({ { server_address, resolved_ip } });
+        }
         cli.enable_server_certificate_verification(false);
+        cli.set_connection_timeout(10);
+        cli.set_read_timeout(15);
 
         httplib::Headers headers{
-            { "User-Agent", req.get_header_value("User-Agent") },
-            { "Host", server_address }
+            { "User-Agent", req.get_header_value("User-Agent") }
         };
 
         httplib::Result response{ cli.Post("/growtopia/server_data.php", headers, req.params) };

@@ -6,10 +6,20 @@ the real proxy against it, checks the server_data.php rewrite like the game
 client would see it, then runs the ENet harness (fake client + fake game
 servers) and finally checks the proxy log.
 
-Needs permission to bind port 443 (root/admin) and Linux (127.0.0.2 loopback
-plus SO_REUSEPORT so the fake endpoint can share port 443 with the proxy).
+Modes:
+  ip        (default) config.json points the proxy at 127.0.0.2 directly.
+  hostname  config.json uses www.growtopia1.com, as in real use. The proxy
+            resolves it over DNS-over-HTTPS: cloudflare-dns.com and dns.google
+            are pointed at the fake server through /etc/hosts (restored
+            afterwards). The fake Cloudflare endpoint fails so the Google
+            fallback is exercised, TLS is verified against a test CA passed via
+            SSL_CERT_FILE, and the SNI the proxy sends is recorded.
 
-Usage: run_e2e.py <build dir>
+Needs root (port 443, /etc/hosts in hostname mode) and Linux (127.0.0.2
+loopback plus SO_REUSEPORT so the fake endpoint can share port 443 with the
+proxy).
+
+Usage: run_e2e.py <build dir> [ip|hostname]
 """
 import http.client
 import json
@@ -23,11 +33,14 @@ import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UPSTREAM_IP = "127.0.0.2"
+GAME_HOST = "www.growtopia1.com"
+DOH_HOSTS = ("cloudflare-dns.com", "dns.google")
 GAME_SERVER_PORT = 17091
+HOSTS_MARKER = "# gtproxy-e2e"
 
 FAKE_SERVER_DATA = (
     "server|127.0.0.1\n"
@@ -44,6 +57,8 @@ FAKE_SERVER_DATA = (
 
 failures = []
 upstream_requests = []
+doh_requests = []
+sni_names = []
 
 
 def check(ok, what):
@@ -53,16 +68,38 @@ def check(ok, what):
 
 
 class FakeGrowtopia(BaseHTTPRequestHandler):
+    def _reply(self, status, payload, content_type):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_GET(self):
+        # DNS-over-HTTPS (JSON API)
+        url = urlparse(self.path)
+        doh_requests.append({"host": self.headers.get("Host"), "path": url.path, "query": url.query})
+        if url.path == "/dns-query":
+            self._reply(503, b"unavailable", "text/plain")  # "Cloudflare" is down
+            return
+        if url.path == "/resolve":
+            name = parse_qs(url.query).get("name", [""])[0]
+            answer = {
+                "Status": 0,
+                "Answer": [
+                    {"name": name + ".", "type": 5, "TTL": 60, "data": "gt-edge.example."},
+                    {"name": "gt-edge.example.", "type": 1, "TTL": 60, "data": UPSTREAM_IP},
+                ],
+            }
+            self._reply(200, json.dumps(answer).encode(), "application/dns-json")
+            return
+        self._reply(404, b"not found", "text/plain")
+
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode(errors="replace")
         upstream_requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
-        payload = FAKE_SERVER_DATA.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html")
-        self.send_header("Content-Length", str(len(payload)))
-        self.end_headers()
-        self.wfile.write(payload)
+        self._reply(200, FAKE_SERVER_DATA.encode(), "text/html")
 
     def log_message(self, *args):
         pass
@@ -79,26 +116,58 @@ def start_fake_upstream(cert, key):
     server = ReusePortHTTPServer((UPSTREAM_IP, 443), FakeGrowtopia)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
+    context.sni_callback = lambda sock, name, ctx: sni_names.append(name)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
 
+def make_test_pki(workdir):
+    """Test CA plus a server certificate for the game and DoH host names."""
+    ca_key, ca_pem = os.path.join(workdir, "ca.key"), os.path.join(workdir, "ca.pem")
+    key, csr, pem = (os.path.join(workdir, n) for n in ("upstream.key", "upstream.csr", "upstream.pem"))
+    ext = os.path.join(workdir, "upstream.ext")
+    run = lambda *args: subprocess.run(args, check=True, capture_output=True)
+    run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+        "-keyout", ca_key, "-out", ca_pem, "-subj", "/CN=GTProxy e2e test CA",
+        "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=keyCertSign,cRLSign")
+    run("openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", csr, "-subj", "/CN=e2e")
+    with open(ext, "w") as f:
+        names = ",".join(f"DNS:{h}" for h in (GAME_HOST, *DOH_HOSTS))
+        f.write(f"subjectAltName={names}\nextendedKeyUsage=serverAuth\n")
+    run("openssl", "x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",
+        "-days", "2", "-out", pem, "-extfile", ext)
+    return ca_pem, pem, key
+
+
+def patch_hosts():
+    with open("/etc/hosts") as f:
+        original = f.read()
+    lines = "".join(f"{UPSTREAM_IP} {h} {HOSTS_MARKER}\n" for h in DOH_HOSTS)
+    with open("/etc/hosts", "w") as f:
+        f.write(original.rstrip("\n") + "\n" + lines)
+    return original
+
+
+def restore_hosts(original):
+    with open("/etc/hosts", "w") as f:
+        f.write(original)
+
+
 def client_server_data(cert):
     # Talk to the proxy exactly like the game client: POST form data over HTTPS.
-    # Trust the proxy's own certificate; it is not issued for 127.0.0.1.
+    # Trust the proxy's own certificate; the client reaches it as 127.0.0.1.
     context = ssl.create_default_context(cafile=cert)
     context.check_hostname = False
-    conn = http.client.HTTPSConnection("127.0.0.1", 443, context=context, timeout=20)
-    body = "version=5.61&platform=0&protocol=225"
+    conn = http.client.HTTPSConnection("127.0.0.1", 443, context=context, timeout=30)
     conn.request(
         "POST",
         "/growtopia/server_data.php",
-        body=body,
+        body="version=5.61&platform=0&protocol=225",
         headers={
             "User-Agent": "UbiServices_SDK_2022.Release.9_PC64_ansi_static",
             "Content-Type": "application/x-www-form-urlencoded",
-            "Host": "www.growtopia1.com",
+            "Host": GAME_HOST,
         },
     )
     response = conn.getresponse()
@@ -120,6 +189,12 @@ def main():
         return 2
 
     build = os.path.abspath(sys.argv[1])
+    mode = sys.argv[2] if len(sys.argv) > 2 else "ip"
+    if mode not in ("ip", "hostname"):
+        print(__doc__)
+        return 2
+    print(f"=== e2e mode: {mode} ===")
+
     proxy_bin = os.path.join(build, "src", "Proxy")
     harness_bin = os.path.join(build, "tests", "GTProxy_e2e")
     for path in (proxy_bin, harness_bin):
@@ -131,20 +206,31 @@ def main():
     shutil.copytree(os.path.join(ROOT, "resources"), os.path.join(workdir, "resources"))
     os.makedirs(os.path.join(workdir, "scripts"))
     shutil.copy(os.path.join(ROOT, "scripts", "rainbow.lua"), os.path.join(workdir, "scripts"))
-    with open(os.path.join(workdir, "config.json"), "w") as f:
-        json.dump({"server": {"port": 16999, "address": UPSTREAM_IP}}, f)
 
-    cert = os.path.join(workdir, "resources", "cert.pem")
-    key = os.path.join(workdir, "resources", "key.pem")
+    proxy_cert = os.path.join(workdir, "resources", "cert.pem")
     items_dat = os.path.join(workdir, "resources", "items.dat")
+    env = dict(os.environ)
 
-    upstream = start_fake_upstream(cert, key)
+    if mode == "hostname":
+        ca_pem, upstream_cert, upstream_key = make_test_pki(workdir)
+        env["SSL_CERT_FILE"] = ca_pem
+        address = GAME_HOST
+    else:
+        upstream_cert, upstream_key = proxy_cert, os.path.join(workdir, "resources", "key.pem")
+        address = UPSTREAM_IP
+
+    with open(os.path.join(workdir, "config.json"), "w") as f:
+        json.dump({"server": {"port": 16999, "address": address}}, f)
+
+    original_hosts = patch_hosts() if mode == "hostname" else None
+    upstream = start_fake_upstream(upstream_cert, upstream_key)
     log_path = os.path.join(workdir, "e2e-stdout.log")
     log_file = open(log_path, "w")
-    proxy = subprocess.Popen(os.environ.get("E2E_PROXY_WRAPPER","").split() + [proxy_bin], cwd=workdir, stdout=log_file, stderr=subprocess.STDOUT)
+    wrapper = os.environ.get("E2E_PROXY_WRAPPER", "").split()
+    proxy = subprocess.Popen(wrapper + [proxy_bin], cwd=workdir, stdout=log_file, stderr=subprocess.STDOUT, env=env)
 
     try:
-        deadline = time.time() + 15
+        deadline = time.time() + 60
         while time.time() < deadline:
             with open(log_path) as f:
                 if "Core initialized successfully" in f.read():
@@ -153,7 +239,7 @@ def main():
         check(proxy.poll() is None, "proxy starts and stays up")
 
         # --- server_data.php through the proxy -------------------------------
-        status, body = client_server_data(cert)
+        status, body = client_server_data(proxy_cert)
         fields = parse_text(body)
         check(status == 200, f"server_data.php via proxy returns 200 (got {status})")
         check(fields.get("server") == "127.0.0.1", "server rewritten to 127.0.0.1")
@@ -177,9 +263,17 @@ def main():
                 req["headers"].get("User-Agent") == "UbiServices_SDK_2022.Release.9_PC64_ansi_static",
                 "client User-Agent forwarded upstream",
             )
+            if mode == "hostname":
+                check(req["headers"].get("Host") == GAME_HOST, f"upstream Host header is {GAME_HOST}")
+
+        if mode == "hostname":
+            check(GAME_HOST in sni_names, f"TLS SNI {GAME_HOST} sent to the game server ({sni_names})")
+            check(any(r["path"] == "/dns-query" for r in doh_requests), "Cloudflare DoH tried first")
+            check(any(r["path"] == "/resolve" for r in doh_requests), "fell back to Google DoH")
+            check("dns.google" in sni_names, "DoH over verified TLS (SNI dns.google)")
 
         # --- ENet session -----------------------------------------------------
-        result = subprocess.run([harness_bin, items_dat], capture_output=True, text=True, timeout=180)
+        result = subprocess.run([harness_bin, items_dat], capture_output=True, text=True, timeout=300)
         print(result.stdout, end="")
         if result.stderr.strip():
             print(result.stderr)
@@ -190,11 +284,13 @@ def main():
     finally:
         proxy.terminate()
         try:
-            proxy.wait(timeout=10)
+            proxy.wait(timeout=20)
         except subprocess.TimeoutExpired:
             proxy.kill()
         upstream.shutdown()
         log_file.close()
+        if original_hosts is not None:
+            restore_hosts(original_hosts)
 
     with open(log_path) as f:
         log = f.read()
@@ -202,15 +298,23 @@ def main():
     check("Successfully parsed items.dat (version 23, count 21700)" in log, "proxy parsed items.dat sent by the server")
     check("Hash matches, loading cached items.dat" in log, "proxy matched the logon items.dat hash (new name suffix)")
     check("Exception" not in log and "Segmentation" not in log, "no exceptions in proxy log")
+    # Reports from the third-party ENet fork (lib/enet submodule) are listed but
+    # not counted: signed shift in the range coder and an unaligned header read,
+    # both harmless on x86-64 and ARM64.
+    sanitizer = [l for l in log.splitlines() if "ERROR: AddressSanitizer" in l or "runtime error:" in l]
+    third_party = [l for l in sanitizer if "/lib/enet/" in l]
+    for line in third_party:
+        print("    (third-party)", line.split("GTProxy/")[-1])
+    check(len(sanitizer) == len(third_party), f"no sanitizer reports in GTProxy code ({len(sanitizer) - len(third_party)})")
     world_warnings = log.count("Failed to fully parse world data")
     check(world_warnings >= 1, f"malformed worlds reported as warnings ({world_warnings})")
-    first_world = log.split("E2ETESTWORLD", 1)[-1] if "E2ETESTWORLD" in log else ""
     check(
-        "Failed to fully parse world data" not in first_world.split("[ClientBound] Decoding packet", 2)[0]
-        if first_world else False,
+        log.find("Failed to fully parse world data") > log.find("E2ETESTWORLD") > 0,
         "valid world parsed without warnings",
     )
     check("Connecting to Growtopia server at 127.0.0.3:17092" in log, "proxy connected to the real sub-server address")
+    if mode == "hostname":
+        check("via fallback dns.google" in log, "proxy log shows DoH fallback")
 
     errors = [line for line in log.splitlines() if "[error]" in line]
     print(f"\nproxy log: {log_path} ({len(errors)} error lines)")

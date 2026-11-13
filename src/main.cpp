@@ -6,14 +6,13 @@
 
 std::unique_ptr<core::Core> g_core{ nullptr };
 
-void signal_handler(int signal)
+void signal_handler(int)
 {
-    if (!g_core) {
-        return;
+    // Only async-signal-safe work here: logging could deadlock if the signal
+    // arrives while the main thread holds the logger's lock.
+    if (g_core) {
+        g_core->stop();
     }
-
-    spdlog::info("Interrupted by signal {}, stopping...", signal);
-    g_core->stop();
 }
 
 int main()
@@ -45,7 +44,7 @@ try {
             GTPROXY_VERSION_MINOR,
             GTPROXY_VERSION_PATCH,
 #ifdef GTPROXY_BUILD_VERSION
-            fmt::format!("-{}", GTPROXY_BUILD_VERSION)
+            fmt::format("-{}", GTPROXY_BUILD_VERSION)
 #else
             ""
 #endif
@@ -57,15 +56,24 @@ try {
         std::signal(SIGTERM, signal_handler);
 
         g_core->run();
+        spdlog::info("Stopping GTProxy...");
     }
     catch (const std::runtime_error& e) {
         spdlog::error("Runtime error: {}", e.what());
+        g_core.reset();
+        spdlog::shutdown();
         return 1;
     }
     catch (const std::exception& ex) {
         spdlog::error("Exception: {}", ex.what());
+        g_core.reset();
+        spdlog::shutdown();
         return 1;
     }
+
+    // Destroy the core while the logger and other statics are still alive
+    // (a global would otherwise be destroyed after main returns).
+    g_core.reset();
 
     spdlog::info("GTProxy stopped");
     spdlog::shutdown();

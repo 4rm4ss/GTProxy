@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+
 #include "config.hpp"
 #include "scheduler.hpp"
 #include "web_server.hpp"
@@ -21,13 +23,14 @@ public:
     ~Core();
 
     void run() const;
-    void stop() { running_ = false; }
+    // Safe to call from a signal handler.
+    void stop() { running_.store(false); }
 
     [[nodiscard]] Config& get_config() { return config_; }
 
 private:
     Config config_;
-    bool running_;
+    std::atomic<bool> running_;
 
     event::Dispatcher dispatcher_;
     std::shared_ptr<Scheduler> scheduler_;

@@ -1,22 +1,53 @@
 #include "dns_resolver.hpp"
 
+#include <array>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <system_error>
 #include <httplib.h>
 #include <fmt/format.h>
 #include <glaze/glaze.hpp>
 #include <magic_enum/magic_enum.hpp>
 #include <spdlog/spdlog.h>
 
+#include "dns_response.hpp"
 #include "../utils/network.hpp"
 
 namespace network {
-struct DnsAnswer {
-    std::string data;
-};
+namespace {
+// LibreSSL from Conan looks for root certificates in a relative "res/cert.pem",
+// so on macOS/Linux point it at the system CA bundle explicitly. Windows uses
+// the system certificate store through cpp-httplib.
+std::optional<std::string> system_ca_bundle()
+{
+#ifdef _WIN32
+    return std::nullopt;
+#else
+    if (const char* env{ std::getenv("SSL_CERT_FILE") }; env && *env) {
+        return std::string{ env };
+    }
 
-struct DnsResponse {
-    int status;
-    std::vector<DnsAnswer> answer;
-};
+    static constexpr std::array candidates{
+        "/etc/ssl/cert.pem",                                    // macOS, Alpine, Arch
+        "/etc/ssl/certs/ca-certificates.crt",                   // Debian, Ubuntu
+        "/etc/pki/tls/certs/ca-bundle.crt",                     // Fedora, RHEL
+        "/etc/ssl/ca-bundle.pem",                               // openSUSE
+        "/opt/homebrew/etc/ca-certificates/cert.pem",           // Homebrew (Apple silicon)
+        "/usr/local/etc/ca-certificates/cert.pem",              // Homebrew (Intel)
+    };
+
+    for (const auto* candidate : candidates) {
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(candidate, ec)) {
+            return std::string{ candidate };
+        }
+    }
+
+    return std::nullopt;
+#endif
+}
+}
 
 std::unique_ptr<DnsProvider> create_dns_provider(const std::string& name)
 {
@@ -40,18 +71,26 @@ DnsResolver::DnsResolver(std::unique_ptr<DnsProvider> provider)
 
 DnsResult DnsResolver::resolve_domain(const std::string& domain) const
 {
+    return resolve_domain(*provider_, domain);
+}
+
+DnsResult DnsResolver::resolve_domain(const DnsProvider& provider, const std::string& domain)
+{
     httplib::Headers headers{
         {"Accept", "application/dns-json"}
     };
 
-    httplib::Client cli{ fmt::format("https://{}", provider_->get_host()) };
+    httplib::Client cli{ fmt::format("https://{}", provider.get_host()) };
+    if (static const auto ca_bundle{ system_ca_bundle() }; ca_bundle) {
+        cli.set_ca_cert_path(*ca_bundle);
+    }
 
     cli.set_connection_timeout(5);
     cli.set_read_timeout(10);
     cli.set_write_timeout(5);
 
     httplib::Result res{ cli.Get(
-        fmt::format("{}?name={}&type=A", provider_->get_path(), domain),
+        fmt::format("{}?name={}&type=A", provider.get_path(), domain),
         headers
     ) };
 
@@ -77,22 +116,7 @@ DnsResult DnsResolver::resolve_domain(const std::string& domain) const
         return { DnsStatus::ServerFail, {} };
     }
 
-    DnsResponse dns_response{};
-    if (const auto ec = glz::read<glz::opts{.error_on_unknown_keys = false }>(dns_response, res->body)) {
-        spdlog::error("Failed to parse DNS response: {}", glz::format_error(ec, res->body));
-        return { DnsStatus::ServerFail, {} };
-    }
-
-    const auto status = static_cast<DnsStatus>(dns_response.status);
-    if (status != DnsStatus::NoError) {
-        return { status, {} };
-    }
-
-    if (dns_response.answer.empty()) {
-        return { DnsStatus::NameError, {} };
-    }
-
-    return { status, dns_response.answer.back().data };
+    return parse_dns_json(res->body);
 }
 
 std::string DnsResolver::resolve_ip(const std::string& host) const
@@ -101,33 +125,41 @@ std::string DnsResolver::resolve_ip(const std::string& host) const
         return host;
     }
 
-    auto [status, ip] = resolve_domain(host);
+    const auto primary{ resolve_domain(*provider_, host) };
+    if (primary.status == DnsStatus::NoError) {
+        spdlog::info("Resolved {} to {}", host, primary.ip);
+        return primary.ip;
+    }
 
-    if (status != DnsStatus::NoError) {
+    spdlog::error(
+        "DNS resolution failed for {} via {}: {}",
+        host,
+        provider_->get_host(),
+        magic_enum::enum_name(primary.status)
+    );
+
+    // The configured DNS-over-HTTPS provider may be unreachable from some
+    // networks; try the other one before giving up.
+    for (const auto* name : { "google", "cloudflare" }) {
+        const auto fallback{ create_dns_provider(name) };
+        if (fallback->get_host() == provider_->get_host()) {
+            continue;
+        }
+
+        const auto result{ resolve_domain(*fallback, host) };
+        if (result.status == DnsStatus::NoError) {
+            spdlog::info("Resolved {} to {} via fallback {}", host, result.ip, fallback->get_host());
+            return result.ip;
+        }
+
         spdlog::error(
-            "DNS resolution failed for {}: {}",
+            "DNS resolution failed for {} via {}: {}",
             host,
-            magic_enum::enum_name(status)
+            fallback->get_host(),
+            magic_enum::enum_name(result.status)
         );
-        return {};
     }
 
-    spdlog::info("Resolved {} to {}", host, ip);
-    return ip;
+    return {};
 }
 }
-
-template<> struct glz::meta<network::DnsResponse> {
-    static constexpr std::string_view rename_key(const std::string_view key) {
-        if (key == "status") {
-            return "Status";
-        }
-
-        if (key == "answer") {
-            return "Answer";
-        }
-
-        // ReSharper disable once CppDFALocalValueEscapesFunction
-        return key;
-    }
-};

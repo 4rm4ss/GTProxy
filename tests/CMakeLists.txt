@@ -6,6 +6,7 @@ find_package(spdlog REQUIRED)
 find_package(glm REQUIRED)
 find_package(magic_enum REQUIRED)
 find_package(ZLIB REQUIRED)
+find_package(glaze REQUIRED)
 
 add_executable(GTProxy_tests
     utils/test_text_parse.cpp
@@ -13,6 +14,7 @@ add_executable(GTProxy_tests
     utils/test_byte_stream_bounds.cpp
     utils/test_zlib.cpp
     utils/test_network.cpp
+    utils/test_dns_response.cpp
     item/test_item_database.cpp
     world/test_world_parsing.cpp
     packet/test_packet_id.cpp
@@ -29,7 +31,8 @@ target_link_libraries(GTProxy_tests PRIVATE
     spdlog::spdlog
     glm::glm
     magic_enum::magic_enum
-    ZLIB::ZLIB)
+    ZLIB::ZLIB
+    glaze::glaze)
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL

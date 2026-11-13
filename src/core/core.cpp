@@ -65,6 +65,28 @@ Core::Core()
 
 Core::~Core()
 {
+    // Tear down in dependency order instead of reverse declaration order:
+    // stop background work first, release everything that holds Lua
+    // references (registered script commands, callbacks, scheduled tasks)
+    // before the Lua state is closed, and destroy ENet hosts before ENet is
+    // deinitialized.
+    if (scheduler_) {
+        scheduler_->stop();
+    }
+
+    script_loader_.reset();
+    script_event_bridge_.reset();
+    script_scheduler_.reset();
+    command_handler_.reset();
+    script_engine_.reset();
+
+    world_handler_.reset();
+    forwarding_handler_.reset();
+    connection_handler_.reset();
+    web_server_.reset();
+    client_.reset();
+    server_.reset();
+
     enet_deinitialize();
 }
 
