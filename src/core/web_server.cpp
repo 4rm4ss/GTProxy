@@ -20,13 +20,22 @@ WebServer::WebServer(
     , client_{ client }
     , server_{ server }
     , dns_resolver_{ network::create_dns_provider(config_.get_client_config().dns_server) }
-    , https_server_{ "./resources/cert.pem", "./resources/key.pem" }
+    , certificates_{ certificate::ensure("resources") }
+    , https_server_{ certificates_.server_cert.string().c_str(), certificates_.server_key.string().c_str() }
     , pending_port_{ 65535 }
 {
     setup_server();
 
+    if (!https_server_.is_valid()) {
+        spdlog::error("HTTPS server could not load {} / {}", certificates_.server_cert.string(), certificates_.server_key.string());
+        return;
+    }
+
     if (!https_server_.bind_to_port("0.0.0.0", 443)) {
-        spdlog::error("Failed to bind to port 443");
+        spdlog::error(
+            "Failed to bind to port 443: another program is using it (e.g. Skype, IIS, VMware, "
+            "another proxy) or binding needs administrator rights on this system"
+        );
         return;
     }
 
@@ -40,7 +49,9 @@ WebServer::WebServer(
 WebServer::~WebServer()
 {
     https_server_.stop();
-    server_thread_.join();
+    if (server_thread_.joinable()) {
+        server_thread_.join();
+    }
 }
 
 void WebServer::setup_server()
@@ -93,61 +104,14 @@ void WebServer::listen_internal()
             spdlog::info("\t{}", req.body);
         }
 
-        std::string server_address = config_.get_server_config().address;
-        std::string resolved_ip = dns_resolver_.resolve_ip(server_address);
-
-        if (resolved_ip.empty()) {
-            res.status = 500;
-            res.set_content("Failed to resolve server address", "text/plain");
-            return true;
-        }
-
-        // Connect to the resolved IP but keep the real host name for TLS SNI and
-        // the Host header, like the game does (system DNS points it at us).
-        httplib::Client cli{ fmt::format("https://{}", server_address) };
-        if (resolved_ip != server_address) {
-            cli.set_hostname_addr_map({ { server_address, resolved_ip } });
-        }
-        cli.enable_server_certificate_verification(false);
-        cli.set_connection_timeout(10);
-        cli.set_read_timeout(15);
-
-        httplib::Headers headers{
-            { "User-Agent", req.get_header_value("User-Agent") }
-        };
-
-        httplib::Result response{ cli.Post("/growtopia/server_data.php", headers, req.params) };
-        if (!response) {
-            spdlog::error(
-                "Response is null: httplib::Error::{}",
-                magic_enum::enum_name(response.error())
-            );
-
+        const auto upstream_body{ fetch_server_data(req) };
+        if (!upstream_body) {
             res.status = 502;
-            res.set_content("Failed to get response from server", "text/plain");
+            res.set_content("Failed to get server_data.php from Growtopia", "text/plain");
             return true;
         }
 
-        if (response.error() != httplib::Error::Success || response->status != 200) {
-            spdlog::error(
-                "Failed to get response: {}",
-                response.error() == httplib::Error::Success
-                    ? fmt::format("HTTP status: {}", response->status)
-                    : fmt::format("HTTP error: {}", httplib::to_string(response.error()))
-            );
-
-            res.status = 502;
-            res.set_content("Failed to get response from server", "text/plain");
-            return true;
-        }
-
-        if (response->body.empty()) {
-            res.status = 502;
-            res.set_content("Empty response from server", "text/plain");
-            return true;
-        }
-
-        utils::TextParse text_parse{ response->body };
+        utils::TextParse text_parse{ *upstream_body };
         if (text_parse.empty()) {
             spdlog::error("Failed to parse server_data.php response");
             res.status = 500;
@@ -187,7 +151,7 @@ void WebServer::listen_internal()
         std::string body{ text_parse.get_raw() };
         constexpr std::string_view end_marker{ "RTENDMARKERBS1001" };
         if (
-            response->body.find(end_marker) != std::string::npos
+            upstream_body->find(end_marker) != std::string::npos
             && body.find(end_marker) == std::string::npos
         ) {
             if (!body.empty() && body.back() != '\n') {
@@ -201,6 +165,70 @@ void WebServer::listen_internal()
     });
 
     https_server_.listen_after_bind();
+}
+
+std::optional<std::string> WebServer::fetch_server_data(const httplib::Request& req)
+{
+    // Try the configured host first; for the official hosts also try the other
+    // one, as either can be unreachable or slow at times.
+    const std::string& configured{ config_.get_server_config().address };
+    std::vector<std::string> hosts{ configured };
+    if (configured == "www.growtopia1.com") {
+        hosts.emplace_back("www.growtopia2.com");
+    } else if (configured == "www.growtopia2.com") {
+        hosts.emplace_back("www.growtopia1.com");
+    }
+
+    const std::string content_type{
+        req.has_header("Content-Type")
+            ? req.get_header_value("Content-Type")
+            : std::string{ "application/x-www-form-urlencoded" }
+    };
+
+    for (const auto& host : hosts) {
+        const std::string ip{ dns_resolver_.resolve_ip(host) };
+        if (ip.empty()) {
+            spdlog::warn("server_data.php: cannot resolve {}", host);
+            continue;
+        }
+
+        // Connect to the resolved IP but keep the real host name for TLS SNI and
+        // the Host header, like the game does (system DNS points it at us).
+        httplib::Client cli{ fmt::format("https://{}", host) };
+        if (ip != host) {
+            cli.set_hostname_addr_map({ { host, ip } });
+        }
+        cli.enable_server_certificate_verification(false);
+        cli.set_connection_timeout(10);
+        cli.set_read_timeout(15);
+
+        const httplib::Headers headers{
+            { "User-Agent", req.get_header_value("User-Agent") },
+            { "Accept", "*/*" }
+        };
+
+        // Forward the client's form body byte for byte.
+        const httplib::Result response{ cli.Post("/growtopia/server_data.php", headers, req.body, content_type) };
+        if (!response) {
+            spdlog::warn("server_data.php via {} ({}) failed: {}", host, ip, httplib::to_string(response.error()));
+            continue;
+        }
+
+        if (response->status != 200 || response->body.find("server|") == std::string::npos) {
+            spdlog::warn(
+                "server_data.php via {} returned HTTP {}: {}",
+                host,
+                response->status,
+                response->body.substr(0, 200)
+            );
+            continue;
+        }
+
+        spdlog::info("Got server_data.php from {} ({})", host, ip);
+        return response->body;
+    }
+
+    return std::nullopt;
 }
 
 void WebServer::on_client_connect(const event::Event& e)

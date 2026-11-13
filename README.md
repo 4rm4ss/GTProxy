@@ -48,6 +48,28 @@ To build from source:
     $ cmake --build .
     ```
 
+## Usage
+
+1. Point the game's web hosts at the proxy. Add to the hosts file
+   (Windows: `C:\Windows\System32\drivers\etc\hosts`, edit as administrator;
+   macOS/Linux: `/etc/hosts`):
+   ```
+   127.0.0.1 www.growtopia1.com
+   127.0.0.1 www.growtopia2.com
+   ```
+2. Trust the proxy's certificate once. On first start the proxy creates a
+   certificate authority unique to your machine in `resources/` (`ca.pem`; the
+   private keys never leave your computer). The game only talks to the proxy
+   after that CA is trusted:
+   ```
+   Proxy --install-cert      # Windows: current user's Root store (asks to confirm)
+                             # macOS: login keychain
+   Proxy --uninstall-cert    # remove it again
+   ```
+3. Start the proxy, then the game. Port 443 must be free.
+
+Remove the hosts entries to play without the proxy.
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](https://github.com/ZTzTopia/GTProxy/blob/main/LICENSE) file for details.

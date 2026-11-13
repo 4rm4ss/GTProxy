@@ -9,6 +9,7 @@ find_package(ZLIB REQUIRED)
 find_package(glaze REQUIRED)
 find_package(lua REQUIRED)
 find_package(sol2 REQUIRED)
+find_package(LibreSSL REQUIRED)
 
 add_executable(GTProxy_tests
     utils/test_text_parse.cpp
@@ -22,8 +23,10 @@ add_executable(GTProxy_tests
     packet/test_packet_id.cpp
     packet/test_on_send_to_server.cpp
     scripting/test_field_binding.cpp
+    core/test_certificate.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
-    ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp)
+    ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src)
@@ -37,7 +40,8 @@ target_link_libraries(GTProxy_tests PRIVATE
     ZLIB::ZLIB
     glaze::glaze
     lua::lua
-    sol2::sol2)
+    sol2::sol2
+    LibreSSL::Crypto)
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL

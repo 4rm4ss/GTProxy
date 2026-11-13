@@ -1,4 +1,8 @@
 #pragma once
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <utility>
 #include <span>
 #include <string>
 #include <enet/enet.h>
@@ -23,6 +27,10 @@ public:
     void disconnect_now();
 
     [[nodiscard]] bool is_connected() const override;
+    // True while a connection is being established or is established.
+    [[nodiscard]] bool is_active() const;
+    // The last server connect() was called with, if any.
+    [[nodiscard]] const std::optional<std::pair<std::string, std::uint16_t>>& last_target() const { return last_target_; }
 
     void flush() const;
 
@@ -39,5 +47,6 @@ private:
 
     event::Dispatcher& dispatcher_;
     ENetPeer* peer_;
+    std::optional<std::pair<std::string, std::uint16_t>> last_target_;
 };
 }

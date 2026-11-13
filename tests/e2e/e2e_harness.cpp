@@ -2,7 +2,9 @@
 // talk to a running GTProxy over ENet, using the same ENet protocol flags as the
 // game. Driven by tests/e2e/run_e2e.py, which also fakes server_data.php.
 //
-// Usage: GTProxy_e2e <items.dat path>
+// Usage: GTProxy_e2e <items.dat path> [mismatch]
+//   mismatch: the logon packet carries a different items.dat hash, so the proxy
+//             must ask the client to download items.dat (hash 0).
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +16,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -322,6 +325,7 @@ int main(const int argc, char** argv)
     }
 
     const std::string items_dat_path{ argv[1] };
+    const bool hash_mismatch{ argc > 2 && std::string_view{ argv[2] } == "mismatch" };
 
     if (enet_initialize() != 0) {
         fmt::print("Failed to initialize ENet\n");
@@ -396,10 +400,12 @@ int main(const int argc, char** argv)
         check(got && same_payload(login, *got), "login packet forwarded to game server");
     }
 
-    // 4. Logon accept with a *changed* name suffix and the items.dat hash.
+    // 4. Logon accept with a *changed* name suffix and the items.dat hash, sent
+    //    as an unsigned integer like the official server does.
+    const auto logon_hash{ static_cast<std::uint32_t>(items_hash) + (hash_mismatch ? 1u : 0u) };
     const packet::PacketVariant logon{
-        std::string{ "OnSuperMainStartAcceptLogonE2ENEWSUFFIX" },
-        static_cast<std::int32_t>(items_hash),
+        std::string{ "OnSuperMainStartAcceptLogonFB211131ddf" },
+        logon_hash,
         std::string{ "ubistatic-a.akamaihd.net" },
         std::string{ "0098/e2e/cache/" },
         std::string{ "cc.cz.madkite.freedom org.aqua.gg idv.aqua.bulldog" },
@@ -407,9 +413,25 @@ int main(const int argc, char** argv)
     };
     const Bytes logon_packet{ variant_packet(logon) };
     send(game_server, logon_packet);
-    {
+    if (!hash_mismatch) {
         const auto got{ receive(client) };
         check(got && same_payload(logon_packet, *got), "OnSuperMainStartAcceptLogon (new suffix) forwarded unchanged");
+    } else {
+        const auto got{ receive(client) };
+        const auto variant{ got ? parse_variant(*got) : std::nullopt };
+        check(variant.has_value(), "patched logon packet reaches the client");
+        if (variant) {
+            const auto& args{ variant->get_variants() };
+            check(
+                args.size() == logon.size() && variant->get<std::string>(0) == "OnSuperMainStartAcceptLogonFB211131ddf",
+                "patched logon keeps name and all arguments"
+            );
+            check(
+                args.size() > 1 && std::holds_alternative<std::uint32_t>(args[1]) && variant->get<std::uint32_t>(1) == 0u,
+                "items.dat hash replaced with 0 (unsigned) so the client downloads items.dat"
+            );
+            check(args.size() > 2 && variant->get<std::string>(2) == "ubistatic-a.akamaihd.net", "other logon arguments unchanged");
+        }
     }
 
     // 5. Server sends items.dat (zlib) like it does for outdated clients.
@@ -584,6 +606,10 @@ int main(const int argc, char** argv)
     // 14. A new session works after quitting (proxy state was reset).
     client.peer = enet_host_connect(client.host, &proxy_address, 2, 0);
     check(pump_until([&] { return client.connected; }), "client can connect to the proxy again after quit");
+    check(
+        pump_until([&] { return sub_server.connects == 2; }),
+        "without new server_data/redirect the proxy reconnects to the last server"
+    );
 
     enet_host_destroy(client.host);
     enet_host_destroy(game_server.host);

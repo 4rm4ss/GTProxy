@@ -184,9 +184,10 @@ private:
 };
 
 struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a> {
-    // Actual function name sent by the server (its suffix can change between versions).
+    // Actual function name sent by the server (its suffix changes between
+    // versions, e.g. ...Hrdxs47254722215a, ...FB211131d, ...FB211131ddf).
     std::string function_name{ "OnSuperMainStartAcceptLogonHrdxs47254722215a" };
-    int32_t item_hash{};
+    int32_t item_hash{};    // sent as an unsigned integer by the official server
     std::string u;
     std::string uu;
     std::string uuu;
@@ -207,27 +208,36 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
         }
 
         function_name = variant.get<std::string>(0);
-        item_hash = variant.get<int32_t>(1);
+        item_hash = static_cast<int32_t>(variant.get_integer(1).value_or(0));
         // Remaining arguments are optional: older/newer servers may send fewer.
         if (variant.size() > 2) { u = variant.get<std::string>(2); }
         if (variant.size() > 3) { uu = variant.get<std::string>(3); }
         if (variant.size() > 4) { uuu = variant.get<std::string>(4); }
-        if (variant.size() > 5) { player_tribute_hash = variant.get<uint32_t>(5); }
+        if (variant.size() > 5) { player_tribute_hash = static_cast<uint32_t>(variant.get_integer(5).value_or(0)); }
 
         return true;
     }
 
     Payload write() override
     {
-        const PacketVariant variant{
+        // Received from the server: patch the original arguments, keeping their
+        // types and anything we do not know about.
+        if (variant.size() >= 2) {
+            PacketVariant patched = variant;
+            patched.set_integer(1, static_cast<uint32_t>(item_hash));
+            if (patched.size() > 5) { patched.set_integer(5, player_tribute_hash); }
+            return VariantPayload{ game_packet, patched };
+        }
+
+        const PacketVariant fresh{
             function_name,
-            item_hash,
+            static_cast<uint32_t>(item_hash),
             u,
             uu,
             uuu,
             player_tribute_hash
         };
-        return VariantPayload{ game_packet, variant };
+        return VariantPayload{ game_packet, fresh };
     }
 };
 }

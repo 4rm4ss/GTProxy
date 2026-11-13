@@ -69,6 +69,8 @@ bool Client::connect(const std::string& host, std::uint16_t port)
     }
     address.port = port;
 
+    last_target_ = std::make_pair(host, port);
+
     peer_ = enet_host_connect(host_, &address, 2, 0);
     if (!peer_) {
         spdlog::error("Failed to start connection to Growtopia server {}:{} (no free peer)", host, port);
@@ -183,6 +185,24 @@ void Client::disconnect_now()
 
     enet_peer_disconnect_now(peer_, 0);
     peer_ = nullptr;
+}
+
+bool Client::is_active() const
+{
+    if (!peer_) {
+        return false;
+    }
+
+    switch (peer_->state) {
+    case ENET_PEER_STATE_CONNECTING:
+    case ENET_PEER_STATE_ACKNOWLEDGING_CONNECT:
+    case ENET_PEER_STATE_CONNECTION_PENDING:
+    case ENET_PEER_STATE_CONNECTION_SUCCEEDED:
+    case ENET_PEER_STATE_CONNECTED:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool Client::is_connected() const

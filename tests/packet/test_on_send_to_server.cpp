@@ -139,3 +139,35 @@ TEST(OnSendToServerTest, FreshPacketFromScriptsStillWorks)
     EXPECT_EQ(std::get<std::int32_t>(args[1]), 17091);
     EXPECT_EQ(std::get<std::string>(args[4]), "127.0.0.1|0|u");
 }
+
+TEST(LogonPacketTest, ReadsUnsignedItemHashAndPatchesKeepingTypes)
+{
+    const PacketVariant variant{
+        std::string{ "OnSuperMainStartAcceptLogonFB211131ddf" },
+        std::uint32_t{ 3735928559u },   // > INT32_MAX, sent unsigned by the server
+        std::string{ "ubistatic-a.akamaihd.net" },
+        std::string{ "0098/123/cache/" },
+        std::string{ "blocked" },
+        std::uint32_t{ 77 },
+        std::string{ "future-argument" }
+    };
+
+    game::OnSuperMainStartAcceptLogonHrdxs47254722215a pkt{};
+    ASSERT_TRUE(pkt.read(make_server_payload(variant)));
+    EXPECT_EQ(static_cast<std::uint32_t>(pkt.item_hash), 3735928559u);
+    EXPECT_EQ(pkt.player_tribute_hash, 77u);
+
+    // Unmodified: byte identical.
+    EXPECT_EQ(PacketHelper::serialize(pkt.write()), PacketHelper::serialize(Payload{ make_server_payload(variant) }));
+
+    // Forcing an items.dat download: only the hash changes, type stays unsigned.
+    pkt.item_hash = 0;
+    const auto written{ pkt.write() };
+    const auto& args{ std::get<VariantPayload>(written).variant.get_variants() };
+    ASSERT_EQ(args.size(), 7u);
+    EXPECT_EQ(std::get<std::string>(args[0]), "OnSuperMainStartAcceptLogonFB211131ddf");
+    ASSERT_TRUE(std::holds_alternative<std::uint32_t>(args[1]));
+    EXPECT_EQ(std::get<std::uint32_t>(args[1]), 0u);
+    EXPECT_EQ(std::get<std::string>(args[2]), "ubistatic-a.akamaihd.net");
+    EXPECT_EQ(std::get<std::string>(args[6]), "future-argument");
+}

@@ -1,6 +1,9 @@
 #include <csignal>
+#include <string_view>
+
 #include <spdlog/spdlog.h>
 
+#include "core/certificate.hpp"
 #include "core/core.hpp"
 #include "core/logger.hpp"
 
@@ -15,7 +18,7 @@ void signal_handler(int)
     }
 }
 
-int main()
+int main(const int argc, char** argv)
 {
 try {
         core::Logger logger{};
@@ -49,6 +52,26 @@ try {
             ""
 #endif
         );
+
+        // One-off certificate commands (run once before playing).
+        if (argc > 1) {
+            const std::string_view command{ argv[1] };
+            if (command == "--install-cert") {
+                const auto paths{ core::certificate::ensure("resources") };
+                const bool ok{ core::certificate::install_ca(paths) };
+                spdlog::info(ok ? "Local CA trusted for the current user" : "Could not trust the local CA automatically");
+                spdlog::shutdown();
+                return ok ? 0 : 1;
+            }
+            if (command == "--uninstall-cert") {
+                const bool ok{ core::certificate::uninstall_ca() };
+                spdlog::shutdown();
+                return ok ? 0 : 1;
+            }
+            spdlog::error("Unknown option '{}'. Options: --install-cert, --uninstall-cert", command);
+            spdlog::shutdown();
+            return 2;
+        }
 
         g_core = std::make_unique<core::Core>();
 

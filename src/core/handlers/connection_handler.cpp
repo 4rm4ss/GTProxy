@@ -86,6 +86,32 @@ void ConnectionHandler::setup_connection_handlers()
         })
     );
 
+    // Runs after every other ClientConnect listener. If neither server_data.php
+    // nor a sub-server redirect told us where to go (e.g. the game reconnected
+    // after a network drop), reconnect to the last server instead of leaving the
+    // client hanging.
+    handles_.emplace_back(
+        dispatcher_,
+        event::Type::ClientConnect,
+        dispatcher_.append_listener(event::Type::ClientConnect, [this](const event::Event&) {
+            if (client_.is_active()) {
+                return;
+            }
+
+            const auto& last{ client_.last_target() };
+            if (!last) {
+                spdlog::error(
+                    "Game connected but no Growtopia server is known yet "
+                    "(server_data.php did not go through the proxy - check the hosts file)"
+                );
+                return;
+            }
+
+            spdlog::warn("No new server_data.php or redirect; reconnecting to last server {}:{}", last->first, last->second);
+            client_.connect(last->first, last->second);
+        }, event::Priority::Lowest)
+    );
+
     handles_.emplace_back(
         dispatcher_,
         event::Type::ClientDisconnect,
@@ -244,7 +270,7 @@ void ConnectionHandler::setup_on_super_main_start_handler()
     handles_.emplace_back(
         dispatcher_,
         on_send_to_server_type,
-        dispatcher_.append_listener(on_send_to_server_type, [](const event::Event& event) {
+        dispatcher_.append_listener(on_send_to_server_type, [this](const event::Event& event) {
             const auto* evt = dynamic_cast<const event::TypedPacketEvent<packet::PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a>*>(&event);
             if (!evt) {
                 return;
@@ -268,10 +294,18 @@ void ConnectionHandler::setup_on_super_main_start_handler()
                 // outdated. If the client is already up to date, take its copy instead.
                 const auto game_path{ find_game_items_dat(server_hash) };
                 if (!game_path) {
-                    spdlog::warn(
-                        "No matching items.dat found. If the server does not send one, item data will be "
-                        "unavailable; copy the game's cache/items.dat into resources/ to fix it"
-                    );
+                    // Tell the client its items.dat is outdated (hash 0) so it asks the
+                    // server for a fresh copy, which the SendItemDatabaseData handler
+                    // then parses and saves. Costs one download per items.dat update.
+                    spdlog::info("No matching items.dat available; asking the client to download it from the server");
+
+                    const auto patched{ std::make_shared<packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a>(*pkt) };
+                    patched->item_hash = 0;
+                    if (packet::PacketHelper::write(*patched, server_)) {
+                        evt->cancel();
+                    } else {
+                        spdlog::warn("Failed to send the patched logon packet; forwarding the original");
+                    }
                     return;
                 }
 

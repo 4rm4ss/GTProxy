@@ -38,6 +38,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UPSTREAM_IP = "127.0.0.2"
 GAME_HOST = "www.growtopia1.com"
+FALLBACK_HOST = "www.growtopia2.com"
 DOH_HOSTS = ("cloudflare-dns.com", "dns.google")
 GAME_SERVER_PORT = 17091
 HOSTS_MARKER = "# gtproxy-e2e"
@@ -99,6 +100,10 @@ class FakeGrowtopia(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode(errors="replace")
         upstream_requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
+        if self.headers.get("Host") == GAME_HOST:
+            # growtopia1 is "down": the proxy must fall back to growtopia2.
+            self._reply(503, b"Service Unavailable", "text/plain")
+            return
         self._reply(200, FAKE_SERVER_DATA.encode(), "text/html")
 
     def log_message(self, *args):
@@ -133,7 +138,7 @@ def make_test_pki(workdir):
         "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=keyCertSign,cRLSign")
     run("openssl", "req", "-newkey", "rsa:2048", "-nodes", "-keyout", key, "-out", csr, "-subj", "/CN=e2e")
     with open(ext, "w") as f:
-        names = ",".join(f"DNS:{h}" for h in (GAME_HOST, *DOH_HOSTS))
+        names = ",".join(f"DNS:{h}" for h in (GAME_HOST, FALLBACK_HOST, *DOH_HOSTS))
         f.write(f"subjectAltName={names}\nextendedKeyUsage=serverAuth\n")
     run("openssl", "x509", "-req", "-in", csr, "-CA", ca_pem, "-CAkey", ca_key, "-CAcreateserial",
         "-days", "2", "-out", pem, "-extfile", ext)
@@ -207,16 +212,16 @@ def main():
     os.makedirs(os.path.join(workdir, "scripts"))
     shutil.copy(os.path.join(ROOT, "scripts", "rainbow.lua"), os.path.join(workdir, "scripts"))
 
-    proxy_cert = os.path.join(workdir, "resources", "cert.pem")
+    # The proxy creates its own CA on first start; the "game" trusts it.
+    proxy_ca = os.path.join(workdir, "resources", "ca.pem")
     items_dat = os.path.join(workdir, "resources", "items.dat")
     env = dict(os.environ)
 
+    ca_pem, upstream_cert, upstream_key = make_test_pki(workdir)
     if mode == "hostname":
-        ca_pem, upstream_cert, upstream_key = make_test_pki(workdir)
         env["SSL_CERT_FILE"] = ca_pem
         address = GAME_HOST
     else:
-        upstream_cert, upstream_key = proxy_cert, os.path.join(workdir, "resources", "key.pem")
         address = UPSTREAM_IP
 
     with open(os.path.join(workdir, "config.json"), "w") as f:
@@ -239,7 +244,8 @@ def main():
         check(proxy.poll() is None, "proxy starts and stays up")
 
         # --- server_data.php through the proxy -------------------------------
-        status, body = client_server_data(proxy_cert)
+        check(os.path.exists(proxy_ca), "proxy generated its local CA (resources/ca.pem)")
+        status, body = client_server_data(proxy_ca)
         fields = parse_text(body)
         check(status == 200, f"server_data.php via proxy returns 200 (got {status})")
         check(fields.get("server") == "127.0.0.1", "server rewritten to 127.0.0.1")
@@ -250,30 +256,40 @@ def main():
         check(fields.get("beta_port") == "56999", "other fields passed through unchanged")
         check(body.rstrip().endswith("RTENDMARKERBS1001"), "end marker kept")
 
-        check(len(upstream_requests) == 1, "proxy queried the game's server_data.php once")
+        expected_requests = 2 if mode == "hostname" else 1
+        check(
+            len(upstream_requests) == expected_requests,
+            f"proxy queried server_data.php {len(upstream_requests)}x (expected {expected_requests})",
+        )
         if upstream_requests:
-            req = upstream_requests[0]
+            req = upstream_requests[-1]
             params = parse_qs(req["body"])
             check(req["path"] == "/growtopia/server_data.php", "upstream path is /growtopia/server_data.php")
             check(
-                params.get("version") == ["5.61"] and params.get("protocol") == ["225"] and params.get("platform") == ["0"],
-                f"client form fields forwarded upstream ({req['body']})",
+                req["body"] == "version=5.61&platform=0&protocol=225",
+                f"client form body forwarded byte for byte ({req['body']})",
+            )
+            check(
+                req["headers"].get("Content-Type") == "application/x-www-form-urlencoded",
+                "Content-Type forwarded",
             )
             check(
                 req["headers"].get("User-Agent") == "UbiServices_SDK_2022.Release.9_PC64_ansi_static",
                 "client User-Agent forwarded upstream",
             )
             if mode == "hostname":
-                check(req["headers"].get("Host") == GAME_HOST, f"upstream Host header is {GAME_HOST}")
+                check(upstream_requests[0]["headers"].get("Host") == GAME_HOST, f"tried {GAME_HOST} first")
+                check(req["headers"].get("Host") == FALLBACK_HOST, f"fell back to {FALLBACK_HOST}")
 
         if mode == "hostname":
-            check(GAME_HOST in sni_names, f"TLS SNI {GAME_HOST} sent to the game server ({sni_names})")
+            check(GAME_HOST in sni_names and FALLBACK_HOST in sni_names, f"TLS SNI carries the game host names ({sni_names})")
             check(any(r["path"] == "/dns-query" for r in doh_requests), "Cloudflare DoH tried first")
             check(any(r["path"] == "/resolve" for r in doh_requests), "fell back to Google DoH")
             check("dns.google" in sni_names, "DoH over verified TLS (SNI dns.google)")
 
         # --- ENet session -----------------------------------------------------
-        result = subprocess.run([harness_bin, items_dat], capture_output=True, text=True, timeout=300)
+        harness_args = [harness_bin, items_dat] + (["mismatch"] if mode == "hostname" else [])
+        result = subprocess.run(harness_args, capture_output=True, text=True, timeout=300)
         print(result.stdout, end="")
         if result.stderr.strip():
             print(result.stderr)
@@ -296,7 +312,12 @@ def main():
         log = f.read()
 
     check("Successfully parsed items.dat (version 23, count 21700)" in log, "proxy parsed items.dat sent by the server")
-    check("Hash matches, loading cached items.dat" in log, "proxy matched the logon items.dat hash (new name suffix)")
+    if mode == "hostname":
+        check("asking the client to download it from the server" in log, "proxy forced an items.dat download on hash mismatch")
+        check("Got server_data.php from www.growtopia2.com" in log, "proxy log shows growtopia2 fallback")
+    else:
+        check("Hash matches, loading cached items.dat" in log, "proxy matched the logon items.dat hash (new name suffix)")
+    check("reconnecting to last server" in log, "proxy log shows last-server reconnect")
     check("Exception" not in log and "Segmentation" not in log, "no exceptions in proxy log")
     # Reports from the third-party ENet fork (lib/enet submodule) are listed but
     # not counted: signed shift in the range coder and an unaligned header read,

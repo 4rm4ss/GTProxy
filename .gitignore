@@ -22,3 +22,6 @@ CMakeSettings.json
 
 # macOS system files
 .DS_Store
+
+# Generated per machine at first run (private keys must never be committed)
+/resources/*.pem

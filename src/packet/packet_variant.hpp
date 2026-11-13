@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -169,6 +171,44 @@ public:
         catch (const std::bad_variant_access& e) {
             spdlog::warn("PacketVariant::get() type mismatch at index {}: {}", index, e.what());
             return T{};
+        }
+    }
+
+    // Integer argument regardless of whether the server sent it signed, unsigned
+    // or as a float (servers are not consistent across versions).
+    [[nodiscard]] std::optional<std::int64_t> get_integer(const std::size_t index) const
+    {
+        if (index >= variants_.size()) {
+            return std::nullopt;
+        }
+
+        const auto& value{ variants_[index] };
+        if (const auto* v{ std::get_if<std::int32_t>(&value) }) {
+            return *v;
+        }
+        if (const auto* v{ std::get_if<std::uint32_t>(&value) }) {
+            return *v;
+        }
+        if (const auto* v{ std::get_if<float>(&value) }) {
+            return static_cast<std::int64_t>(*v);
+        }
+
+        return std::nullopt;
+    }
+
+    // Replaces an integer argument keeping the type the server used for it.
+    void set_integer(const std::size_t index, const std::int64_t value)
+    {
+        if (index >= variants_.size()) {
+            return;
+        }
+
+        if (std::holds_alternative<std::uint32_t>(variants_[index])) {
+            variants_[index] = static_cast<std::uint32_t>(value);
+        } else if (std::holds_alternative<float>(variants_[index])) {
+            variants_[index] = static_cast<float>(value);
+        } else {
+            variants_[index] = static_cast<std::int32_t>(value);
         }
     }
 
