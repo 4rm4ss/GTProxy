@@ -1,4 +1,5 @@
 #include "packet_bindings.hpp"
+#include "field.hpp"
 
 #include "../../packet/generic_packets.hpp"
 #include "../../packet/packet_variant.hpp"
@@ -73,8 +74,8 @@ void PacketBindings::bind_text_parse(sol::state& lua)
         "set", [](utils::TextParse& tp, const std::string& key, const std::string& value) {
             tp.set(key, { value });
         },
-        "remove", &utils::TextParse::remove,
-        "contains", &utils::TextParse::contains,
+        "remove", field<&utils::TextParse::remove>(),
+        "contains", field<&utils::TextParse::contains>(),
         "keys", [](const utils::TextParse& tp, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table keys = lua.create_table();
@@ -84,7 +85,7 @@ void PacketBindings::bind_text_parse(sol::state& lua)
             }
             return keys;
         },
-        "empty", &utils::TextParse::empty,
+        "empty", field<&utils::TextParse::empty>(),
         "get_raw", sol::overload(
             [](const utils::TextParse& tp) {
                 return tp.get_raw();
@@ -100,9 +101,9 @@ void PacketBindings::bind_base_packet(sol::state& lua)
 {
     lua.new_usertype<packet::IPacket>("IPacket",
         sol::no_constructor,
-        "id", &packet::IPacket::id,
-        "channel", &packet::IPacket::channel,
-        "has_raw_data", &packet::IPacket::has_raw_data,
+        "id", field<&packet::IPacket::id>(),
+        "channel", field<&packet::IPacket::channel>(),
+        "has_raw_data", field<&packet::IPacket::has_raw_data>(),
         "raw", sol::property([](const packet::IPacket& p, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table t = lua.create_table();
@@ -119,48 +120,48 @@ void PacketBindings::bind_message_packets(sol::state& lua)
     lua.new_usertype<packet::message::ServerHello>("ServerHelloPacket",
         sol::constructors<packet::message::ServerHello()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "text_parse", &packet::message::ServerHello::text_parse
+        "text_parse", field<&packet::message::ServerHello::text_parse>()
     );
 
     lua.new_usertype<packet::message::Log>("LogPacket",
         sol::constructors<packet::message::Log()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "msg", &packet::message::Log::msg,
-        "text_parse", &packet::message::Log::text_parse
+        "msg", field<&packet::message::Log::msg>(),
+        "text_parse", field<&packet::message::Log::text_parse>()
     );
 
     lua.new_usertype<packet::message::Quit>("QuitPacket",
         sol::constructors<packet::message::Quit()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "text_parse", &packet::message::Quit::text_parse
+        "text_parse", field<&packet::message::Quit::text_parse>()
     );
 
     lua.new_usertype<packet::message::QuitToExit>("QuitToExitPacket",
         sol::constructors<packet::message::QuitToExit()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "text_parse", &packet::message::QuitToExit::text_parse
+        "text_parse", field<&packet::message::QuitToExit::text_parse>()
     );
 
     lua.new_usertype<packet::message::JoinRequest>("JoinRequestPacket",
         sol::constructors<packet::message::JoinRequest()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "world_name", &packet::message::JoinRequest::world_name,
-        "invited_world", &packet::message::JoinRequest::invited_world,
-        "text_parse", &packet::message::JoinRequest::text_parse
+        "world_name", field<&packet::message::JoinRequest::world_name>(),
+        "invited_world", field<&packet::message::JoinRequest::invited_world>(),
+        "text_parse", field<&packet::message::JoinRequest::text_parse>()
     );
 
     lua.new_usertype<packet::message::ValidateWorld>("ValidateWorldPacket",
         sol::constructors<packet::message::ValidateWorld()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "world_name", &packet::message::ValidateWorld::world_name,
-        "text_parse", &packet::message::ValidateWorld::text_parse
+        "world_name", field<&packet::message::ValidateWorld::world_name>(),
+        "text_parse", field<&packet::message::ValidateWorld::text_parse>()
     );
 
     lua.new_usertype<packet::message::Input>("InputPacket",
         sol::constructors<packet::message::Input()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "text", &packet::message::Input::text,
-        "text_parse", &packet::message::Input::text_parse
+        "text", field<&packet::message::Input::text>(),
+        "text_parse", field<&packet::message::Input::text_parse>()
     );
 }
 
@@ -169,7 +170,7 @@ void PacketBindings::bind_game_packets(sol::state& lua)
     lua.new_usertype<packet::game::Disconnect>("DisconnectPacket",
         sol::constructors<packet::game::Disconnect()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "game_packet", &packet::game::Disconnect::game_packet,
+        "game_packet", field<&packet::game::Disconnect::game_packet>(),
         "extra", sol::property([](const packet::game::Disconnect& p, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table t = lua.create_table();
@@ -183,44 +184,44 @@ void PacketBindings::bind_game_packets(sol::state& lua)
     lua.new_usertype<packet::game::OnSendToServer>("OnSendToServerPacket",
         sol::constructors<packet::game::OnSendToServer()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "port", &packet::game::OnSendToServer::port,
-        "token", &packet::game::OnSendToServer::token,
-        "user", &packet::game::OnSendToServer::user,
-        "address", &packet::game::OnSendToServer::address,
-        "door_id", &packet::game::OnSendToServer::door_id,
-        "uuid_token", &packet::game::OnSendToServer::uuid_token,
-        "login_mode", &packet::game::OnSendToServer::login_mode,
-        "username", &packet::game::OnSendToServer::username,
-        "variant", &packet::game::OnSendToServer::variant,
-        "game_packet", &packet::game::OnSendToServer::game_packet
+        "port", field<&packet::game::OnSendToServer::port>(),
+        "token", field<&packet::game::OnSendToServer::token>(),
+        "user", field<&packet::game::OnSendToServer::user>(),
+        "address", field<&packet::game::OnSendToServer::address>(),
+        "door_id", field<&packet::game::OnSendToServer::door_id>(),
+        "uuid_token", field<&packet::game::OnSendToServer::uuid_token>(),
+        "login_mode", field<&packet::game::OnSendToServer::login_mode>(),
+        "username", field<&packet::game::OnSendToServer::username>(),
+        "variant", field<&packet::game::OnSendToServer::variant>(),
+        "game_packet", field<&packet::game::OnSendToServer::game_packet>()
     );
 
     lua.new_usertype<packet::game::OnNameChanged>("OnNameChangedPacket",
         sol::constructors<packet::game::OnNameChanged()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "name", &packet::game::OnNameChanged::name,
-        "net_id", &packet::game::OnNameChanged::net_id,
-        "variant", &packet::game::OnNameChanged::variant,
-        "game_packet", &packet::game::OnNameChanged::game_packet
+        "name", field<&packet::game::OnNameChanged::name>(),
+        "net_id", field<&packet::game::OnNameChanged::net_id>(),
+        "variant", field<&packet::game::OnNameChanged::variant>(),
+        "game_packet", field<&packet::game::OnNameChanged::game_packet>()
     );
 
     lua.new_usertype<packet::game::OnChangeSkin>("OnChangeSkinPacket",
         sol::constructors<packet::game::OnChangeSkin()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "skin", &packet::game::OnChangeSkin::skin_code,
-        "net_id", &packet::game::OnChangeSkin::net_id,
-        "variant", &packet::game::OnChangeSkin::variant,
-        "game_packet", &packet::game::OnChangeSkin::game_packet
+        "skin", field<&packet::game::OnChangeSkin::skin_code>(),
+        "net_id", field<&packet::game::OnChangeSkin::net_id>(),
+        "variant", field<&packet::game::OnChangeSkin::variant>(),
+        "game_packet", field<&packet::game::OnChangeSkin::game_packet>()
     );
 
     lua.new_usertype<packet::game::OnSpawn>("OnSpawnPacket",
         sol::constructors<packet::game::OnSpawn()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "spawn", &packet::game::OnSpawn::spawn,
-        "net_id", &packet::game::OnSpawn::net_id,
-        "user_id", &packet::game::OnSpawn::user_id,
-        "country_code", &packet::game::OnSpawn::country_code,
-        "name", &packet::game::OnSpawn::name,
+        "spawn", field<&packet::game::OnSpawn::spawn>(),
+        "net_id", field<&packet::game::OnSpawn::net_id>(),
+        "user_id", field<&packet::game::OnSpawn::user_id>(),
+        "country_code", field<&packet::game::OnSpawn::country_code>(),
+        "name", field<&packet::game::OnSpawn::name>(),
         "position", sol::property([](const packet::game::OnSpawn& p, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table t = lua.create_table();
@@ -228,23 +229,23 @@ void PacketBindings::bind_game_packets(sol::state& lua)
             t["y"] = p.position.y;
             return t;
         }),
-        "invisible", &packet::game::OnSpawn::invisible,
-        "mod_state", &packet::game::OnSpawn::mod_state,
-        "supermod_state", &packet::game::OnSpawn::supermod_state,
-        "online_id", &packet::game::OnSpawn::online_id,
-        "type", &packet::game::OnSpawn::type,
-        "title_icon", &packet::game::OnSpawn::title_icon,
-        "variant", &packet::game::OnSpawn::variant,
-        "game_packet", &packet::game::OnSpawn::game_packet
+        "invisible", field<&packet::game::OnSpawn::invisible>(),
+        "mod_state", field<&packet::game::OnSpawn::mod_state>(),
+        "supermod_state", field<&packet::game::OnSpawn::supermod_state>(),
+        "online_id", field<&packet::game::OnSpawn::online_id>(),
+        "type", field<&packet::game::OnSpawn::type>(),
+        "title_icon", field<&packet::game::OnSpawn::title_icon>(),
+        "variant", field<&packet::game::OnSpawn::variant>(),
+        "game_packet", field<&packet::game::OnSpawn::game_packet>()
     );
 
     lua.new_usertype<packet::game::OnRemove>("OnRemovePacket",
         sol::constructors<packet::game::OnRemove()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "net_id", &packet::game::OnRemove::net_id,
-        "player_id", &packet::game::OnRemove::player_id,
-        "variant", &packet::game::OnRemove::variant,
-        "game_packet", &packet::game::OnRemove::game_packet
+        "net_id", field<&packet::game::OnRemove::net_id>(),
+        "player_id", field<&packet::game::OnRemove::player_id>(),
+        "variant", field<&packet::game::OnRemove::variant>(),
+        "game_packet", field<&packet::game::OnRemove::game_packet>()
     );
 
     lua.new_usertype<packet::game::SendMapData>("SendMapDataPacket",
@@ -276,30 +277,30 @@ void PacketBindings::bind_game_packets(sol::state& lua)
     lua.new_usertype<packet::game::TileChangeRequest>("TileChangeRequestPacket",
         sol::constructors<packet::game::TileChangeRequest()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "int_x", &packet::game::TileChangeRequest::int_x,
-        "int_y", &packet::game::TileChangeRequest::int_y,
-        "item_id", &packet::game::TileChangeRequest::item_id
+        "int_x", field<&packet::game::TileChangeRequest::int_x>(),
+        "int_y", field<&packet::game::TileChangeRequest::int_y>(),
+        "item_id", field<&packet::game::TileChangeRequest::item_id>()
     );
 
     lua.new_usertype<packet::game::ItemChangeObject>("ItemChangeObjectPacket",
         sol::constructors<packet::game::ItemChangeObject()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "pos_x", &packet::game::ItemChangeObject::pos_x,
-        "pos_y", &packet::game::ItemChangeObject::pos_y,
-        "item_id", &packet::game::ItemChangeObject::item_id,
-        "amount", &packet::game::ItemChangeObject::amount
+        "pos_x", field<&packet::game::ItemChangeObject::pos_x>(),
+        "pos_y", field<&packet::game::ItemChangeObject::pos_y>(),
+        "item_id", field<&packet::game::ItemChangeObject::item_id>(),
+        "amount", field<&packet::game::ItemChangeObject::amount>()
     );
 
     lua.new_usertype<packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a>("OnSuperMainStartAcceptLogonPacket",
         sol::constructors<packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "variant", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::variant,
-        "game_packet", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::game_packet,
-        "item_hash", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::item_hash,
-        "u", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::u,
-        "uu", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uu,
-        "uuu", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uuu,
-        "player_tribute_hash", &packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::player_tribute_hash
+        "variant", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::variant>(),
+        "game_packet", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::game_packet>(),
+        "item_hash", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::item_hash>(),
+        "u", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::u>(),
+        "uu", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uu>(),
+        "uuu", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uuu>(),
+        "player_tribute_hash", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::player_tribute_hash>()
     );
 
     lua.new_usertype<packet::game::SendInventoryState>("SendInventoryStatePacket",
@@ -318,9 +319,9 @@ void PacketBindings::bind_game_packets(sol::state& lua)
     lua.new_usertype<packet::game::ModifyItemInventory>("ModifyItemInventoryPacket",
         sol::constructors<packet::game::ModifyItemInventory()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "item_id", &packet::game::ModifyItemInventory::item_id,
-        "amount", &packet::game::ModifyItemInventory::amount,
-        "net_id", &packet::game::ModifyItemInventory::net_id
+        "item_id", field<&packet::game::ModifyItemInventory::item_id>(),
+        "amount", field<&packet::game::ModifyItemInventory::amount>(),
+        "net_id", field<&packet::game::ModifyItemInventory::net_id>()
     );
 }
 
@@ -329,21 +330,21 @@ void PacketBindings::bind_generic_packets(sol::state& lua)
     lua.new_usertype<packet::GenericTextPacket>("GenericTextPacket",
         sol::constructors<packet::GenericTextPacket()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "text_parse", &packet::GenericTextPacket::text_parse,
-        "message_type", &packet::GenericTextPacket::message_type
+        "text_parse", field<&packet::GenericTextPacket::text_parse>(),
+        "message_type", field<&packet::GenericTextPacket::message_type>()
     );
 
     lua.new_usertype<packet::GenericVariantPacket>("GenericVariantPacket",
         sol::constructors<packet::GenericVariantPacket()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "variant", &packet::GenericVariantPacket::variant,
-        "game_packet", &packet::GenericVariantPacket::game_packet
+        "variant", field<&packet::GenericVariantPacket::variant>(),
+        "game_packet", field<&packet::GenericVariantPacket::game_packet>()
     );
 
     lua.new_usertype<packet::GenericGamePacket>("GenericGamePacket",
         sol::constructors<packet::GenericGamePacket()>(),
         sol::base_classes, sol::bases<packet::IPacket>(),
-        "game_packet", &packet::GenericGamePacket::game_packet,
+        "game_packet", field<&packet::GenericGamePacket::game_packet>(),
         "extra", sol::property([](const packet::GenericGamePacket& p, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table t = lua.create_table();
@@ -359,10 +360,10 @@ void PacketBindings::bind_game_update_packet(sol::state& lua)
 {
     lua.new_usertype<packet::GameUpdatePacket>("GameUpdatePacket",
         sol::constructors<packet::GameUpdatePacket()>(),
-        "type", &packet::GameUpdatePacket::type,
-        "net_id", &packet::GameUpdatePacket::net_id,
+        "type", field<&packet::GameUpdatePacket::type>(),
+        "net_id", field<&packet::GameUpdatePacket::net_id>(),
         "flags", sol::property([](const packet::GameUpdatePacket& p) { return p.flags.value; }),
-        "data_size", &packet::GameUpdatePacket::data_size,
+        "data_size", field<&packet::GameUpdatePacket::data_size>(),
         "pos_x", sol::property(
             [](const packet::GameUpdatePacket& p) { return *reinterpret_cast<const float*>(&p.pad_4[0]); },
             [](packet::GameUpdatePacket& p, float v) { *reinterpret_cast<float*>(&p.pad_4[0]) = v; }
@@ -475,7 +476,7 @@ void PacketBindings::bind_packet_variant(sol::state& lua)
             return t;
         },
 
-        "size", &packet::PacketVariant::size,
+        "size", field<&packet::PacketVariant::size>(),
         "type_at", [](const packet::PacketVariant& var, std::size_t index) -> std::string {
             if (index >= var.size()) {
                 return "nil";

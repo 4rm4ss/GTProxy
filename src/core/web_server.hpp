@@ -1,5 +1,6 @@
 #pragma once
 #include <httplib.h>
+#include <mutex>
 #include <thread>
 
 #include "../core/config.hpp"
@@ -36,6 +37,7 @@ private:
     httplib::SSLServer https_server_;
     std::thread server_thread_;
 
+    std::mutex pending_mutex_;
     std::string pending_address_;
     uint16_t pending_port_;
 };

@@ -1,4 +1,5 @@
 #include "world_data_bindings.hpp"
+#include "field.hpp"
 
 #include <glm/glm.hpp>
 #include <sol/sol.hpp>
@@ -23,12 +24,12 @@ void WorldDataBindings::bind_tile(sol::state& lua)
 {
     lua.new_usertype<world::Tile>("Tile",
         sol::no_constructor,
-        "foreground", &world::Tile::foreground,
-        "background", &world::Tile::background,
-        "parent_tile", &world::Tile::parent_tile,
-        "flag", &world::Tile::flag,
-        "lock_parent_tile", &world::Tile::lock_parent_tile,
-        "flag_to_string", &world::Tile::flag_to_string,
+        "foreground", field<&world::Tile::foreground>(),
+        "background", field<&world::Tile::background>(),
+        "parent_tile", field<&world::Tile::parent_tile>(),
+        "flag", field<&world::Tile::flag>(),
+        "lock_parent_tile", field<&world::Tile::lock_parent_tile>(),
+        "flag_to_string", field<&world::Tile::flag_to_string>(),
         "extra", sol::property([](world::Tile& t) -> world::tile_extra::TileExtra* {
             return &t.extra;
         })
@@ -39,8 +40,8 @@ void WorldDataBindings::bind_tile_extra(sol::state& lua)
 {
     lua.new_usertype<world::tile_extra::TileExtra>("TileExtra",
         sol::no_constructor,
-        "get_type", &world::tile_extra::TileExtra::get_type,
-        "has_value", &world::tile_extra::TileExtra::has_value,
+        "get_type", field<&world::tile_extra::TileExtra::get_type>(),
+        "has_value", field<&world::tile_extra::TileExtra::has_value>(),
         "get_as_door", [](world::tile_extra::TileExtra& te) -> world::tile_extra::Door* {
             return te.get_as<world::tile_extra::Door>();
         },
@@ -60,14 +61,14 @@ void WorldDataBindings::bind_tile_extra_variants(sol::state& lua)
 {
     lua.new_usertype<world::tile_extra::Door>("TileExtraDoor",
         sol::no_constructor,
-        "label", &world::tile_extra::Door::label,
-        "unk", &world::tile_extra::Door::unk
+        "label", field<&world::tile_extra::Door::label>(),
+        "unk", field<&world::tile_extra::Door::unk>()
     );
     
     lua.new_usertype<world::tile_extra::Lock>("TileExtraLock",
         sol::no_constructor,
-        "owner_id", &world::tile_extra::Lock::owner_id,
-        "unk", &world::tile_extra::Lock::unk,
+        "owner_id", field<&world::tile_extra::Lock::owner_id>(),
+        "unk", field<&world::tile_extra::Lock::unk>(),
         "accesses", [](const world::tile_extra::Lock& lock, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table accesses{ lua.create_table() };
@@ -80,14 +81,14 @@ void WorldDataBindings::bind_tile_extra_variants(sol::state& lua)
     
     lua.new_usertype<world::tile_extra::Seed>("TileExtraSeed",
         sol::no_constructor,
-        "growth_time", &world::tile_extra::Seed::growth_time,
-        "fruit_count", &world::tile_extra::Seed::fruit_count
+        "growth_time", field<&world::tile_extra::Seed::growth_time>(),
+        "fruit_count", field<&world::tile_extra::Seed::fruit_count>()
     );
     
     lua.new_usertype<world::tile_extra::Sign>("TileExtraSign",
         sol::no_constructor,
-        "label", &world::tile_extra::Sign::label,
-        "unk", &world::tile_extra::Sign::unk
+        "label", field<&world::tile_extra::Sign::label>(),
+        "unk", field<&world::tile_extra::Sign::unk>()
     );
 }
 
@@ -95,7 +96,7 @@ void WorldDataBindings::bind_object(sol::state& lua)
 {
     lua.new_usertype<world::Object>("Object",
         sol::no_constructor,
-        "item_id", &world::Object::item_id,
+        "item_id", field<&world::Object::item_id>(),
         "pos", sol::property([](const world::Object& o, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table t = lua.create_table();
@@ -103,9 +104,9 @@ void WorldDataBindings::bind_object(sol::state& lua)
             t["y"] = o.pos.y;
             return t;
         }),
-        "amount", &world::Object::amount,
-        "flags", &world::Object::flags,
-        "object_id", &world::Object::object_id
+        "amount", field<&world::Object::amount>(),
+        "flags", field<&world::Object::flags>(),
+        "object_id", field<&world::Object::object_id>()
     );
 }
 
@@ -136,7 +137,7 @@ void WorldDataBindings::bind_object_map(sol::state& lua)
 {
     lua.new_usertype<WorldObjectMap>("WorldObjectMap",
         sol::no_constructor,
-        "get_drop_id", &WorldObjectMap::get_drop_id,
+        "get_drop_id", field<&WorldObjectMap::get_drop_id>(),
         "get_objects", [](const WorldObjectMap& om, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table objects{ lua.create_table() };

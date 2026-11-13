@@ -7,6 +7,8 @@ find_package(glm REQUIRED)
 find_package(magic_enum REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(glaze REQUIRED)
+find_package(lua REQUIRED)
+find_package(sol2 REQUIRED)
 
 add_executable(GTProxy_tests
     utils/test_text_parse.cpp
@@ -19,6 +21,7 @@ add_executable(GTProxy_tests
     world/test_world_parsing.cpp
     packet/test_packet_id.cpp
     packet/test_on_send_to_server.cpp
+    scripting/test_field_binding.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp)
 
@@ -32,7 +35,9 @@ target_link_libraries(GTProxy_tests PRIVATE
     glm::glm
     magic_enum::magic_enum
     ZLIB::ZLIB
-    glaze::glaze)
+    glaze::glaze
+    lua::lua
+    sol2::sol2)
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL

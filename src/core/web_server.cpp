@@ -156,16 +156,23 @@ void WebServer::listen_internal()
 
         spdlog::info("Original server_data.php response:\n{}", text_parse);
 
-        pending_address_ = text_parse.get("server", 0);
-
-        std::string port{ text_parse.get("port", 0) };
+        const std::string server_ip{ text_parse.get("server", 0) };
+        const std::string port{ text_parse.get("port", 0) };
+        uint16_t server_port{};
         if (
-            auto [ptr, ec] = std::from_chars(port.data(), port.data() + port.size(), pending_port_);
-            ec != std::errc{}
+            auto [ptr, ec] = std::from_chars(port.data(), port.data() + port.size(), server_port);
+            ec != std::errc{} || server_ip.empty()
         ) {
-            spdlog::error("Failed to parse port from server_data.php response");
+            spdlog::error("Failed to parse server/port from server_data.php response");
             res.status = 500;
             return true;
+        }
+
+        {
+            // Written on the HTTPS thread, read on the main thread.
+            std::lock_guard lock{ pending_mutex_ };
+            pending_address_ = server_ip;
+            pending_port_ = server_port;
         }
 
         text_parse.set("server", { "127.0.0.1" });
@@ -198,20 +205,27 @@ void WebServer::listen_internal()
 
 void WebServer::on_client_connect(const event::Event& e)
 {
-    if (pending_port_ == 65535) {
-        return;
+    std::string address;
+    uint16_t port{};
+    {
+        std::lock_guard lock{ pending_mutex_ };
+        if (pending_port_ == 65535) {
+            return;
+        }
+
+        address = std::move(pending_address_);
+        port = pending_port_;
+        pending_address_.clear();
+        pending_port_ = 65535;
     }
 
-    spdlog::info("Connecting to Growtopia server at {}:{}", pending_address_, pending_port_);
-
-    client_.connect(pending_address_, pending_port_);
-
-    pending_address_.clear();
-    pending_port_ = 65535;
+    spdlog::info("Connecting to Growtopia server at {}:{}", address, port);
+    client_.connect(address, port);
 }
 
 void WebServer::on_client_disconnect(const event::Event& e)
 {
+    std::lock_guard lock{ pending_mutex_ };
     pending_address_.clear();
     pending_port_ = 65535;
 }
