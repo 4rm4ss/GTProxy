@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <algorithm>
 #include <deque>
 #include <fstream>
 #include <iterator>

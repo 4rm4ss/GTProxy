@@ -1,4 +1,8 @@
 #include "command_bindings.hpp"
+
+#include <string>
+#include <vector>
+
 #include "../../packet/message/chat.hpp"
 
 namespace scripting::bindings {

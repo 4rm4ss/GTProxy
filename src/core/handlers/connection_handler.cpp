@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <system_error>
+#include <vector>
 
 #include "../../packet/game/server.hpp"
 #include "../../packet/game/item_database.hpp"

@@ -5,6 +5,7 @@
 
 # Ignore build directories
 /build
+/build-*
 /cmake-build-debug
 /cmake-build-release
 /cmake-build-relwithdebinfo
