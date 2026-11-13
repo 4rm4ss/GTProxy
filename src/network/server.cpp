@@ -31,7 +31,9 @@ ENetHost* Server::create_host(std::uint16_t port)
     address.host = ENET_HOST_ANY;
     address.port = port;
 
-    ENetHost* host{ enet_host_create(&address, 1, 2, 0, 0) };
+    // One game client at a time, but keep spare slots so a reconnect is never
+    // refused while a previous connection has not fully closed yet.
+    ENetHost* host{ enet_host_create(&address, 4, 2, 0, 0) };
     if (!host) {
         return nullptr;
     }
@@ -56,6 +58,13 @@ void Server::on_connect(ENetPeer* peer)
     );
 
     enet_peer_timeout(peer, 0, ENET_PEER_TIMEOUT_MAXIMUM / 2, 0);
+
+    // A new game connection replaces a stale one that never disconnected.
+    if (peer_ && peer_ != peer) {
+        spdlog::info("Dropping previous game client connection");
+        enet_peer_disconnect_now(peer_, 0);
+    }
+
     peer_ = peer;
 
     const event::ConnectionEvent evt{ event::Type::ClientConnect };

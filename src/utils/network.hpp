@@ -1,5 +1,9 @@
 #pragma once
 #include <algorithm>
+#include <charconv>
+#include <cstdint>
+#include <string>
+#include <string_view>
 #include <format>
 #include <vector>
 
@@ -18,18 +22,15 @@ inline bool is_valid_ip_address(const std::string& address)
         return false;
     }
 
-    return std::ranges::all_of(parts, [](const std::string_view& part){
-        try {
-            std::uint8_t value{};
-            if (std::from_chars(part.data(), part.data() + part.size(), value).ec != std::errc{}) {
-                return false;
-            }
-
-            return value > 0 && value <= 255;
-        }
-        catch (const std::exception&) {
+    // Each part must be a plain decimal number 0-255 ("127.0.0.1", "10.0.0.5").
+    return std::ranges::all_of(parts, [](const std::string_view& part) {
+        if (part.empty() || part.size() > 3) {
             return false;
         }
+
+        std::uint8_t value{};
+        const auto [ptr, ec]{ std::from_chars(part.data(), part.data() + part.size(), value) };
+        return ec == std::errc{} && ptr == part.data() + part.size();
     });
 }
 

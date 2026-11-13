@@ -20,10 +20,45 @@ void CommandBindings::bind(sol::state& lua)
             sol::table lua_ctx{ lua.create_table() };
             lua_ctx["args"] = args_table;
             lua_ctx["raw"] = ctx.raw_input;
-            lua_ctx["reply"] = [&ctx](const std::string& msg) -> bool {
+            // Supports both ctx:reply(msg, ...) and ctx.reply(msg, ...). Extra
+            // arguments replace "{}" placeholders in order. Captures the server
+            // (which outlives the command), so a stored ctx stays safe to use.
+            lua_ctx["reply"] = [&server = ctx.server](sol::this_state ts, sol::variadic_args va) -> bool {
+                sol::state_view state{ ts };
+                const sol::protected_function to_string{ state["tostring"] };
+                const auto as_string = [&to_string](const sol::object& value) -> std::string {
+                    if (value.is<std::string>()) {
+                        return value.as<std::string>();
+                    }
+
+                    const sol::protected_function_result converted{ to_string(value) };
+                    return converted.valid() ? converted.get<std::string>() : std::string{};
+                };
+
+                std::vector<sol::object> values(va.begin(), va.end());
+                std::size_t index{ 0 };
+                if (index < values.size() && values[index].get_type() == sol::type::table) {
+                    ++index; // method call: first argument is ctx itself
+                }
+
+                if (index >= values.size()) {
+                    return false;
+                }
+
+                std::string msg{ as_string(values[index++]) };
+                for (; index < values.size(); ++index) {
+                    const auto value{ as_string(values[index]) };
+                    if (const auto pos{ msg.find("{}") }; pos != std::string::npos) {
+                        msg.replace(pos, 2, value);
+                    } else {
+                        msg += ' ';
+                        msg += value;
+                    }
+                }
+
                 auto log_pkt = std::make_shared<packet::message::Log>();
                 log_pkt->msg = msg;
-                return packet::PacketHelper::write(*log_pkt, ctx.server);
+                return packet::PacketHelper::write(*log_pkt, server);
             };
 
             try {

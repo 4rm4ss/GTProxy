@@ -168,7 +168,22 @@ void WebServer::listen_internal()
 
         spdlog::debug("Modified server_data.php response:\n{}", text_parse);
 
-        res.set_content(text_parse.get_raw(), "text/html");
+        // TextParse drops lines without a key|value pair, such as the
+        // "RTENDMARKERBS1001" end marker; keep it so the client sees the
+        // response in the same shape the real server sends.
+        std::string body{ text_parse.get_raw() };
+        constexpr std::string_view end_marker{ "RTENDMARKERBS1001" };
+        if (
+            response->body.find(end_marker) != std::string::npos
+            && body.find(end_marker) == std::string::npos
+        ) {
+            if (!body.empty() && body.back() != '\n') {
+                body += '\n';
+            }
+            body += end_marker;
+        }
+
+        res.set_content(body, "text/html");
         return true;
     });
 

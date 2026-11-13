@@ -12,6 +12,7 @@ add_executable(GTProxy_tests
     utils/test_byte_stream.cpp
     utils/test_byte_stream_bounds.cpp
     utils/test_zlib.cpp
+    utils/test_network.cpp
     item/test_item_database.cpp
     world/test_world_parsing.cpp
     packet/test_packet_id.cpp
@@ -36,3 +37,27 @@ target_compile_definitions(GTProxy_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(GTProxy_tests)
+
+# End-to-end harness (fake client + fake game servers), driven by
+# tests/e2e/run_e2e.py. Needs port 443, so it is not part of ctest.
+option(GTPROXY_BUILD_E2E "Build the end-to-end proxy harness" OFF)
+if (GTPROXY_BUILD_E2E)
+    add_executable(GTProxy_e2e
+        e2e/e2e_harness.cpp
+        ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp)
+
+    target_include_directories(GTProxy_e2e PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/lib/enet/include)
+
+    target_link_libraries(GTProxy_e2e PRIVATE
+        enet
+        fmt::fmt
+        spdlog::spdlog
+        glm::glm
+        magic_enum::magic_enum
+        ZLIB::ZLIB)
+
+    target_compile_definitions(GTProxy_e2e PRIVATE
+        SPDLOG_FMT_EXTERNAL)
+endif ()

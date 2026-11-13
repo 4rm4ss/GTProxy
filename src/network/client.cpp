@@ -22,6 +22,9 @@ Client::Client(core::Config& config, event::Dispatcher& dispatcher)
 
 ENetHost* Client::create_host()
 {
+    // Exactly one peer slot: the ENet fork derives the "new packet" header
+    // integrity from the first peer's port, so outgoing connections must always
+    // use slot 0. connect() frees the slot before every new connection.
     ENetHost* host{ enet_host_create(nullptr, 1, 2, 0, 0) };
     if (!host) {
         return nullptr;
@@ -44,12 +47,35 @@ bool Client::connect(const std::string& host, std::uint16_t port)
         return false;
     }
 
+    // When the game switches sub-server it reconnects immediately, while the
+    // previous upstream connection may still be finishing a graceful disconnect.
+    // Close it right away (the old server is still notified) so the single peer
+    // slot is free; otherwise the new connection cannot be created.
+    // Flush first: a queued graceful disconnect would otherwise never be sent,
+    // because disconnect_now() sends nothing for a peer already disconnecting.
+    enet_host_flush(host_);
+    for (std::size_t i = 0; i < host_->peerCount; ++i) {
+        if (ENetPeer* old_peer{ &host_->peers[i] }; old_peer->state != ENET_PEER_STATE_DISCONNECTED) {
+            enet_peer_disconnect_now(old_peer, 0);
+        }
+    }
+    peer_ = nullptr;
+
     ENetAddress address{};
-    enet_address_set_host(&address, host.c_str());
+    if (enet_address_set_host(&address, host.c_str()) != 0) {
+        spdlog::error("Failed to resolve Growtopia server address '{}'", host);
+        peer_ = nullptr;
+        return false;
+    }
     address.port = port;
 
     peer_ = enet_host_connect(host_, &address, 2, 0);
-    return peer_ != nullptr;
+    if (!peer_) {
+        spdlog::error("Failed to start connection to Growtopia server {}:{} (no free peer)", host, port);
+        return false;
+    }
+
+    return true;
 }
 
 void Client::on_connect(ENetPeer* peer)
