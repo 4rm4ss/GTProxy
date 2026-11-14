@@ -1,4 +1,5 @@
 #include "world_bindings.hpp"
+#include "field.hpp"
 
 namespace scripting::bindings {
 void WorldBindings::bind(sol::state& lua)
@@ -8,7 +9,7 @@ void WorldBindings::bind(sol::state& lua)
         "get_local_player", [](const world::World& world) -> std::shared_ptr<player::Player> {
             return world.get_local_player().lock();
         },
-        "get_local_net_id", &world::World::get_local_net_id,
+        "get_local_net_id", field<&world::World::get_local_net_id>(),
         "get_player", [](const world::World& world, const int32_t net_id) -> std::shared_ptr<player::Player> {
             return world.get_player(net_id).lock();
         },
@@ -28,7 +29,7 @@ void WorldBindings::bind(sol::state& lua)
         "get_object_map", [](world::World& world) -> WorldObjectMap& {
             return world.get_object_map();
         },
-        "get_version", &world::World::get_version
+        "get_version", field<&world::World::get_version>()
     );
 
     lua["world"] = std::ref(world::World::instance());

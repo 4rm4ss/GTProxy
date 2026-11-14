@@ -1,7 +1,12 @@
 #pragma once
 #include <httplib.h>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
 #include <thread>
 
+#include "../core/certificate.hpp"
 #include "../core/config.hpp"
 #include "../event/event.hpp"
 #include "../network/client.hpp"
@@ -22,6 +27,7 @@ public:
 private:
     void setup_server();
     void listen_internal();
+    [[nodiscard]] std::optional<std::string> fetch_server_data(const httplib::Request& req);
 
     void on_client_connect(const event::Event& e);
     void on_client_disconnect(const event::Event& e);
@@ -33,9 +39,11 @@ private:
     network::Server& server_;
 
     network::DnsResolver dns_resolver_;
+    certificate::Paths certificates_;   // must be initialised before https_server_
     httplib::SSLServer https_server_;
     std::thread server_thread_;
 
+    std::mutex pending_mutex_;
     std::string pending_address_;
     uint16_t pending_port_;
 };

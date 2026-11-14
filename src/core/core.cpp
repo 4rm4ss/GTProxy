@@ -21,6 +21,14 @@ Core::Core()
     : running_{ true }
     , scheduler_{ std::make_shared<Scheduler>() }
 {
+    spdlog::info(
+        "Config: server {} | proxy port {} | DNS {} | prefix '{}'",
+        config_.get_server_config().address,
+        config_.get_server_config().port,
+        config_.get_client_config().dns_server,
+        config_.get_command_config().prefix
+    );
+
     if (enet_initialize() != 0) {
         throw std::runtime_error{ "Failed to initialize ENet" };
     }
@@ -34,7 +42,9 @@ Core::Core()
     connection_handler_ = std::make_unique<handlers::ConnectionHandler>(dispatcher_, *client_, *server_, config_);
     forwarding_handler_ = std::make_unique<handlers::ForwardingHandler>(dispatcher_, *client_, *server_);
     world_handler_ = std::make_unique<handlers::WorldHandler>(dispatcher_);
-    command_handler_ = std::make_unique<command::CommandHandler>(config_, dispatcher_, scheduler_, *server_, *client_);
+    feature_handler_ = std::make_unique<handlers::FeatureHandler>(dispatcher_, *server_, *client_);
+    inventory_handler_ = std::make_unique<handlers::InventoryHandler>(dispatcher_, *feature_handler_, "gtproxy-settings.txt");
+    command_handler_ = std::make_unique<command::CommandHandler>(config_, dispatcher_, scheduler_, *server_, *client_, *feature_handler_, *inventory_handler_);
 
     script_engine_ = std::make_unique<scripting::LuaEngine>();
 
@@ -65,6 +75,30 @@ Core::Core()
 
 Core::~Core()
 {
+    // Tear down in dependency order instead of reverse declaration order:
+    // stop background work first, release everything that holds Lua
+    // references (registered script commands, callbacks, scheduled tasks)
+    // before the Lua state is closed, and destroy ENet hosts before ENet is
+    // deinitialized.
+    if (scheduler_) {
+        scheduler_->stop();
+    }
+
+    script_loader_.reset();
+    script_event_bridge_.reset();
+    script_scheduler_.reset();
+    command_handler_.reset();
+    script_engine_.reset();
+    inventory_handler_.reset();
+    feature_handler_.reset();
+
+    world_handler_.reset();
+    forwarding_handler_.reset();
+    connection_handler_.reset();
+    web_server_.reset();
+    client_.reset();
+    server_.reset();
+
     enet_deinitialize();
 }
 
@@ -83,6 +117,9 @@ void Core::run() const
 
         server_->process();
         client_->process();
+        client_->check_connect_progress();
+        feature_handler_->update();
+        inventory_handler_->update();
         script_scheduler_->update(elapsed);
 
         if (sleep_duration > std::chrono::microseconds::zero()) {

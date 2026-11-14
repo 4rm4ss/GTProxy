@@ -1,4 +1,5 @@
 #include "item_bindings.hpp"
+#include "field.hpp"
 
 #include <magic_enum/magic_enum.hpp>
 #include <sol/sol.hpp>
@@ -11,9 +12,9 @@ void ItemBindings::bind_item_database(sol::state& lua)
 {
     lua.new_usertype<item::ItemDatabase>("ItemDatabase",
         sol::no_constructor,
-        "get_version", &item::ItemDatabase::get_version,
-        "get_count", &item::ItemDatabase::get_count,
-        "empty", &item::ItemDatabase::empty,
+        "get_version", field<&item::ItemDatabase::get_version>(),
+        "get_count", field<&item::ItemDatabase::get_count>(),
+        "empty", field<&item::ItemDatabase::empty>(),
         "get_item", [](const item::ItemDatabase& db, std::uint32_t id) -> const item::ItemInfo* {
             return db.get_item(id);
         }
@@ -26,17 +27,17 @@ void ItemBindings::bind_item_info(sol::state& lua)
 {
     lua.new_usertype<item::ItemInfo>("ItemInfo",
         sol::no_constructor,
-        "item_id", &item::ItemInfo::item_id,
-        "item_name", &item::ItemInfo::item_name,
-        "item_type", &item::ItemInfo::item_type,
-        "material", &item::ItemInfo::material,
-        "texture_file_path", &item::ItemInfo::texture_file_path,
-        "visual_effect", &item::ItemInfo::visual_effect,
-        "collision_type", &item::ItemInfo::collision_type,
-        "clothing_type", &item::ItemInfo::clothing_type,
-        "rarity", &item::ItemInfo::rarity,
-        "max_amount", &item::ItemInfo::max_amount,
-        "health", &item::ItemInfo::health,
+        "item_id", field<&item::ItemInfo::item_id>(),
+        "item_name", field<&item::ItemInfo::item_name>(),
+        "item_type", field<&item::ItemInfo::item_type>(),
+        "material", field<&item::ItemInfo::material>(),
+        "texture_file_path", field<&item::ItemInfo::texture_file_path>(),
+        "visual_effect", field<&item::ItemInfo::visual_effect>(),
+        "collision_type", field<&item::ItemInfo::collision_type>(),
+        "clothing_type", field<&item::ItemInfo::clothing_type>(),
+        "rarity", field<&item::ItemInfo::rarity>(),
+        "max_amount", field<&item::ItemInfo::max_amount>(),
+        "health", field<&item::ItemInfo::health>(),
         "flags", sol::property([](const item::ItemInfo& info, sol::this_state s) {
             sol::state_view lua{ s };
             sol::table flags{ lua.create_table() };

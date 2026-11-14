@@ -18,12 +18,15 @@ struct Log : TextPacket<PacketId::Log> {
         return true;
     }
 
+    // Messages the proxy shows to the player. Current game clients do not print
+    // "action|log" text packets, so send the OnConsoleMessage call the official
+    // server uses for chat/console output instead.
     Payload write() override
     {
-        utils::TextParse parse{};
-        parse.add("action", "log");
-        parse.add("msg", msg);
-        return TextPayload{ MESSAGE_TYPE, parse };
+        GameUpdatePacket game_packet{};
+        game_packet.type = PACKET_CALL_FUNCTION;
+        game_packet.net_id = static_cast<std::uint32_t>(-1);
+        return VariantPayload{ game_packet, PacketVariant{ std::string{ "OnConsoleMessage" }, msg } };
     }
 };
 }

@@ -2,10 +2,13 @@
 #include "packet_event_registry.hpp"
 #include "game/server.hpp"
 #include "game/world.hpp"
+#include "game/dialog.hpp"
+#include "game/player.hpp"
 #include "game/item_database.hpp"
 #include "game/inventory.hpp"
 #include "message/chat.hpp"
 #include "message/exit.hpp"
+#include "message/dialog.hpp"
 #include "message/input.hpp"
 #include "message/server_hello.hpp"
 
@@ -41,6 +44,26 @@ inline void register_packet_events() {
     registry.register_event(
         PacketId::Log,
         make_event_builder<message::Log, PacketId::Log>()
+    );
+    registry.register_event(
+        PacketId::DialogReturn,
+        make_event_builder<message::DialogReturn, PacketId::DialogReturn>()
+    );
+    registry.register_event(
+        PacketId::State,
+        make_event_builder<game::State, PacketId::State>()
+    );
+    registry.register_event(
+        PacketId::OnNameChanged,
+        make_event_builder<game::OnNameChanged, PacketId::OnNameChanged>()
+    );
+    registry.register_event(
+        PacketId::OnDialogRequest,
+        make_event_builder<game::OnDialogRequest, PacketId::OnDialogRequest>()
+    );
+    registry.register_event(
+        PacketId::OnRequestWorldSelectMenu,
+        make_event_builder<game::OnRequestWorldSelectMenu, PacketId::OnRequestWorldSelectMenu>()
     );
 
     registry.register_event(

@@ -1,14 +1,13 @@
 #pragma once
 #include <utility>
 #include <spdlog/spdlog.h>
-#include <spdlog/sinks/rotating_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
 namespace core {
 class Logger {
 public:
     Logger() = default;
-    ~Logger() { logger_->flush(); }
+    ~Logger() { if (logger_) { logger_->flush(); } }
 
     [[nodiscard]] static std::shared_ptr<spdlog::sinks::stdout_color_sink_mt> create_console_sink()
     {
@@ -19,15 +18,6 @@ public:
         console_sink->set_level(spdlog::level::info);
 #endif
         return console_sink;
-    }
-
-    [[nodiscard]] static std::shared_ptr<spdlog::sinks::rotating_file_sink_mt> create_file_sink()
-    {
-        return std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            "proxy.log",
-            1024 * 1024 * 2,
-            4
-        );
     }
 
     [[nodiscard]] std::shared_ptr<spdlog::logger> get_logger() const { return logger_; }

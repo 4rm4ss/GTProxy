@@ -479,6 +479,11 @@ struct ItemInfo
     std::uint16_t __unk_8;
     std::string info;
     std::uint16_t ingredients[2];
-    std::uint8_t __unk_9;
+    std::uint8_t __unk_9;               // version >= 24
+
+    std::string hit_sound_file;         // version >= 25
+    std::uint32_t hit_sound_file_hash;  // version >= 25
+    std::uint8_t __unk_10;              // version >= 26
+    std::string __unk_11;               // version >= 27
 };
 }

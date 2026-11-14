@@ -33,7 +33,7 @@ private:
     Config& config_;
 
     std::string pending_address_;
-    uint16_t pending_port_;
+    uint16_t pending_port_{ 65535 }; // 65535 = no pending sub-server
 
     std::vector<event::ScopedHandle> handles_;
 };

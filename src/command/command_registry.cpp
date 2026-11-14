@@ -1,5 +1,7 @@
 #include "command_registry.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <iterator>
 #include <sstream>
 #include <spdlog/spdlog.h>
@@ -94,7 +96,9 @@ std::pair<std::string, std::vector<std::string>> CommandRegistry::parse(std::str
         return {};
     }
 
+    // Phones capitalise the first letter: /Warp works like /warp.
     std::string name = std::move(tokens[0]);
+    std::ranges::transform(name, name.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
     tokens.erase(tokens.begin());
 
     return { std::move(name), std::move(tokens) };

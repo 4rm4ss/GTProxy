@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 #include <fmt/format.h>
@@ -11,11 +12,22 @@
 namespace command {
 class HelpCommand final : public ICommand {
 public:
+    // Shows the command list somewhere other than chat (the menu); chat is
+    // used when not set.
+    explicit HelpCommand(std::function<void()> show_list = {})
+        : show_list_{ std::move(show_list) }
+    { }
+
     [[nodiscard]] std::string_view name() const override { return "proxyhelp"; }
     [[nodiscard]] std::string description() const override { return "List all commands or show command usage"; }
 
     Result execute(const Context& ctx) override
     {
+        if (ctx.args.empty() && show_list_) {
+            show_list_();
+            return Result::Success;
+        }
+
         if (ctx.args.empty()) {
             auto commands{ ctx.registry.get_all_commands() };
             
@@ -45,5 +57,8 @@ public:
         packet::PacketHelper::write(log_error, ctx.server);
         return Result::Failed;
     }
+
+private:
+    std::function<void()> show_list_;
 };
 }

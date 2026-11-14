@@ -1,4 +1,6 @@
 #pragma once
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -144,6 +146,19 @@ public:
                 byte_stream.read(value);
                 variants_.emplace_back(value);
             }
+            else {
+                // Unknown argument type: we cannot know its size, so refuse the
+                // whole packet. It is then forwarded untouched instead of being
+                // re-serialized with arguments missing or shifted.
+                spdlog::warn("PacketVariant: unknown argument type {} at index {}", type, index);
+                variants_.clear();
+                return false;
+            }
+        }
+
+        if (!byte_stream.good()) {
+            variants_.clear();
+            return false;
         }
 
         return true;
@@ -170,6 +185,49 @@ public:
             spdlog::warn("PacketVariant::get() type mismatch at index {}: {}", index, e.what());
             return T{};
         }
+    }
+
+    // Integer argument regardless of whether the server sent it signed, unsigned
+    // or as a float (servers are not consistent across versions).
+    [[nodiscard]] std::optional<std::int64_t> get_integer(const std::size_t index) const
+    {
+        if (index >= variants_.size()) {
+            return std::nullopt;
+        }
+
+        const auto& value{ variants_[index] };
+        if (const auto* v{ std::get_if<std::int32_t>(&value) }) {
+            return *v;
+        }
+        if (const auto* v{ std::get_if<std::uint32_t>(&value) }) {
+            return *v;
+        }
+        if (const auto* v{ std::get_if<float>(&value) }) {
+            return static_cast<std::int64_t>(*v);
+        }
+
+        return std::nullopt;
+    }
+
+    // Replaces a numeric argument keeping the type the server used for it.
+    // Arguments of any other type (strings, vectors) are never touched.
+    bool set_integer(const std::size_t index, const std::int64_t value)
+    {
+        if (index >= variants_.size()) {
+            return false;
+        }
+
+        auto& slot{ variants_[index] };
+        if (std::holds_alternative<std::uint32_t>(slot)) {
+            slot = static_cast<std::uint32_t>(value);
+        } else if (std::holds_alternative<std::int32_t>(slot)) {
+            slot = static_cast<std::int32_t>(value);
+        } else if (std::holds_alternative<float>(slot)) {
+            slot = static_cast<float>(value);
+        } else {
+            return false;
+        }
+        return true;
     }
 
     void set(const std::size_t index, const variant& value)

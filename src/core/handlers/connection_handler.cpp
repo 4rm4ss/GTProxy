@@ -1,9 +1,54 @@
 #include "connection_handler.hpp"
 
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <system_error>
+#include <vector>
+
 #include "../../packet/game/server.hpp"
 #include "../../packet/game/item_database.hpp"
 
 namespace core::handlers {
+namespace {
+// Locations where an installed Growtopia client keeps its items.dat cache.
+std::vector<std::filesystem::path> game_items_dat_candidates()
+{
+    std::vector<std::filesystem::path> paths;
+
+    if (const char* local_app_data{ std::getenv("LOCALAPPDATA") }) {
+        paths.emplace_back(std::filesystem::path{ local_app_data } / "Growtopia" / "cache" / "items.dat");
+    }
+
+    if (const char* home{ std::getenv("HOME") }) {
+        paths.emplace_back(
+            std::filesystem::path{ home } / "Library" / "Application Support" / "growtopia" / "cache" / "items.dat"
+        );
+    }
+
+    return paths;
+}
+
+std::optional<std::filesystem::path> find_game_items_dat(const std::uint32_t expected_hash)
+{
+    for (const auto& path : game_items_dat_candidates()) {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            continue;
+        }
+
+        const auto hash{ static_cast<std::uint32_t>(utils::hash::proton_file(path.string())) };
+        if (hash == expected_hash) {
+            return path;
+        }
+
+        spdlog::debug("Game items.dat at {} has hash {}, expected {}", path.string(), hash, expected_hash);
+    }
+
+    return std::nullopt;
+}
+}
+
 ConnectionHandler::ConnectionHandler(
     event::Dispatcher& dispatcher,
     network::Client& client,
@@ -41,16 +86,47 @@ void ConnectionHandler::setup_connection_handlers()
         })
     );
 
+    // Runs after every other ClientConnect listener. If neither server_data.php
+    // nor a sub-server redirect told us where to go (e.g. the game reconnected
+    // after a network drop), reconnect to the last server instead of leaving the
+    // client hanging.
+    handles_.emplace_back(
+        dispatcher_,
+        event::Type::ClientConnect,
+        dispatcher_.append_listener(event::Type::ClientConnect, [this](const event::Event&) {
+            if (client_.is_active()) {
+                return;
+            }
+
+            const auto& last{ client_.last_target() };
+            if (!last) {
+                spdlog::error(
+                    "Game connected but no Growtopia server is known yet "
+                    "(server_data.php did not go through the proxy - check the hosts file)"
+                );
+                return;
+            }
+
+            spdlog::warn("No new server_data.php or redirect; reconnecting to last server {}:{}", last->first, last->second);
+            client_.connect(last->first, last->second);
+        }, event::Priority::Lowest)
+    );
+
     handles_.emplace_back(
         dispatcher_,
         event::Type::ClientDisconnect,
         dispatcher_.append_listener(event::Type::ClientDisconnect, [this](const event::Event&) {
-            if (!client_.is_connected()) {
+            if (!client_.is_active()) {
                 return;
             }
 
-            client_.disconnect();
-            spdlog::info("Gracefully disconnect Growtopia client from proxy server");
+            // Close the upstream connection at once: the game usually reconnects
+            // within milliseconds (sub-server switch) and the proxy's single
+            // upstream slot must be free by then. A graceful disconnect could sit
+            // behind unacknowledged data and never be sent; disconnect_now() drops
+            // the queue and notifies the server immediately.
+            client_.disconnect_now();
+            spdlog::info("Game client left; closed the connection to the Growtopia server");
         })
     );
 
@@ -199,7 +275,7 @@ void ConnectionHandler::setup_on_super_main_start_handler()
     handles_.emplace_back(
         dispatcher_,
         on_send_to_server_type,
-        dispatcher_.append_listener(on_send_to_server_type, [](const event::Event& event) {
+        dispatcher_.append_listener(on_send_to_server_type, [this](const event::Event& event) {
             const auto* evt = dynamic_cast<const event::TypedPacketEvent<packet::PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a>*>(&event);
             if (!evt) {
                 return;
@@ -213,16 +289,45 @@ void ConnectionHandler::setup_on_super_main_start_handler()
             // ReSharper disable once CppVariableCanBeMadeConstexpr
             const std::string cache_path{ "resources/items.dat" };
             const auto server_hash{ static_cast<std::uint32_t>(pkt->item_hash) };
-            const auto cached_hash{ (utils::hash::proton_file(cache_path)) };
+            const auto cached_hash{ static_cast<std::uint32_t>(utils::hash::proton_file(cache_path)) };
 
+            std::string load_path{ cache_path };
             if (server_hash != cached_hash) {
-                spdlog::info("Hash mismatch: server={}, cached={}", server_hash, cached_hash);
-                return;
+                spdlog::info("items.dat hash mismatch: server={}, cached={}", server_hash, cached_hash);
+
+                // The server only sends items.dat when the game client's own copy is
+                // outdated. If the client is already up to date, take its copy instead.
+                const auto game_path{ find_game_items_dat(server_hash) };
+                if (!game_path) {
+                    // Tell the client its items.dat is outdated (hash 0) so it asks the
+                    // server for a fresh copy, which the SendItemDatabaseData handler
+                    // then parses and saves. Costs one download per items.dat update.
+                    spdlog::info("No matching items.dat available; asking the client to download it from the server");
+
+                    const auto patched{ std::make_shared<packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a>(*pkt) };
+                    patched->item_hash = 0;
+                    if (packet::PacketHelper::write(*patched, server_)) {
+                        evt->cancel();
+                    } else {
+                        spdlog::warn("Failed to send the patched logon packet; forwarding the original");
+                    }
+                    return;
+                }
+
+                load_path = game_path->string();
+                spdlog::info("Using game client's items.dat from {}", load_path);
+
+                std::error_code ec;
+                std::filesystem::copy_file(*game_path, cache_path, std::filesystem::copy_options::overwrite_existing, ec);
+                if (ec) {
+                    spdlog::warn("Failed to copy items.dat to {}: {}", cache_path, ec.message());
+                }
+            } else {
+                spdlog::info("Hash matches, loading cached items.dat (hash: {})", cached_hash);
             }
 
-            spdlog::info("Hash matches, loading cached items.dat (hash: {})", cached_hash);
-            if (!item::ItemDatabase::instance().load_from_file(cache_path)) {
-                spdlog::warn("Failed to load cached items.dat");
+            if (!item::ItemDatabase::instance().load_from_file(load_path)) {
+                spdlog::warn("Failed to load items.dat from {}", load_path);
                 return;
             }
 

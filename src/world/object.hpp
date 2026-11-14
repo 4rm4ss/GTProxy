@@ -6,7 +6,7 @@
 namespace world {
 struct Object {
     std::uint16_t item_id;
-    glm::ivec2 pos;
+    glm::vec2 pos; // world position in pixels (floats on the wire)
     std::uint8_t amount;
     std::uint8_t flags;
     std::uint32_t object_id;

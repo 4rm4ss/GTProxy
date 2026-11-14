@@ -5,6 +5,7 @@
 
 # Ignore build directories
 /build
+/build-*
 /cmake-build-debug
 /cmake-build-release
 /cmake-build-relwithdebinfo
@@ -21,3 +22,6 @@ CMakeSettings.json
 
 # macOS system files
 .DS_Store
+
+# Generated per machine at first run (private keys must never be committed)
+/resources/*.pem

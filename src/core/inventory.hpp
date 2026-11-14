@@ -1,0 +1,70 @@
+#pragma once
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <vector>
+
+// Inventory data and the game's item dialogs (drop / trash), kept free of
+// network code so they can be unit tested.
+namespace core::inventory {
+// Item flag bits in the inventory packet.
+inline constexpr std::uint8_t FLAG_WORN{ 0x01 };
+
+struct Item {
+    std::uint16_t id{ 0 };
+    std::uint8_t count{ 0 };
+    std::uint8_t flags{ 0 };
+};
+
+struct Inventory {
+    std::uint32_t slots{ 0 };
+    std::vector<Item> items;
+};
+
+// PACKET_SEND_INVENTORY_STATE extra data:
+// u8 ?, u32 slots, u16 count, count x (u16 id, u8 amount, u8 flags).
+[[nodiscard]] std::optional<Inventory> parse(std::span<const std::byte> data);
+
+// A dialog about one item (it embeds itemID), e.g. the drop_item /
+// trash_item dialog the server opens after "action|drop" / "action|trash".
+// dialog_name tells which one it is.
+struct ItemDialog {
+    std::string dialog_name;    // "drop_item" or "trash_item"
+    std::uint16_t item_id{ 0 };
+    std::uint32_t count{ 0 };   // amount the dialog offers (what you own)
+    std::string item_name;
+};
+
+[[nodiscard]] std::optional<ItemDialog> parse_item_dialog(std::string_view markup);
+
+// Text the game sends to confirm such a dialog with the given amount.
+[[nodiscard]] std::string item_dialog_reply(std::string_view dialog_name, std::uint16_t item_id, std::uint32_t count);
+
+// Text the game sends when you press Drop / Trash on an item.
+[[nodiscard]] std::string drop_request(std::uint16_t item_id);
+[[nodiscard]] std::string trash_request(std::uint16_t item_id);
+
+// Lock item IDs that never change.
+inline constexpr std::uint16_t WORLD_LOCK{ 242 };
+inline constexpr std::uint16_t DIAMOND_LOCK{ 1796 };
+inline constexpr std::uint16_t BLUE_GEM_LOCK{ 7188 };
+
+// World Lock currency: value in World Locks for the lock items, 0 otherwise.
+// Known IDs work even when items.dat could not be read; newer locks (Black
+// Gem Lock) are recognised by name.
+[[nodiscard]] std::uint64_t lock_value(std::uint16_t item_id, std::string_view item_name = {});
+
+// Locks worth exactly `amount` World Locks from what you have, biggest
+// first (300 -> 3 Diamond Locks). nullopt when it cannot be paid exactly.
+struct LockStack {
+    std::uint16_t id{ 0 };
+    std::uint64_t value{ 0 };   // in World Locks
+    std::uint32_t count{ 0 };
+};
+[[nodiscard]] std::optional<std::vector<std::pair<std::uint16_t, std::uint32_t>>> pick_locks(std::vector<LockStack> have, std::uint64_t amount);
+
+// Name of the lock items above without items.dat ("" for other IDs).
+[[nodiscard]] std::string_view known_name(std::uint16_t item_id);
+}

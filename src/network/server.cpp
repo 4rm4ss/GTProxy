@@ -1,6 +1,7 @@
 #include "server.hpp"
 
 #include <stdexcept>
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 #include "../packet/packet_decoder.hpp"
@@ -15,7 +16,11 @@ Server::Server(core::Config& config, event::Dispatcher& dispatcher)
     , peer_{ nullptr }
 {
     if (!host_) {
-        throw std::runtime_error{"Failed to create proxy server host"};
+        throw std::runtime_error{ fmt::format(
+            "Failed to open UDP port {} for the game: it is already in use "
+            "(is another GTProxy window still open?)",
+            config.get_server_config().port
+        ) };
     }
 
     spdlog::info(
@@ -31,7 +36,9 @@ ENetHost* Server::create_host(std::uint16_t port)
     address.host = ENET_HOST_ANY;
     address.port = port;
 
-    ENetHost* host{ enet_host_create(&address, 1, 2, 0, 0) };
+    // One game client at a time, but keep spare slots so a reconnect is never
+    // refused while a previous connection has not fully closed yet.
+    ENetHost* host{ enet_host_create(&address, 4, 2, 0, 0) };
     if (!host) {
         return nullptr;
     }
@@ -56,6 +63,13 @@ void Server::on_connect(ENetPeer* peer)
     );
 
     enet_peer_timeout(peer, 0, ENET_PEER_TIMEOUT_MAXIMUM / 2, 0);
+
+    // A new game connection replaces a stale one that never disconnected.
+    if (peer_ && peer_ != peer) {
+        spdlog::info("Dropping previous game client connection");
+        enet_peer_disconnect_now(peer_, 0);
+    }
+
     peer_ = peer;
 
     const event::ConnectionEvent evt{ event::Type::ClientConnect };

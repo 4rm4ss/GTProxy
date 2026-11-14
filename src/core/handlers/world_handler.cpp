@@ -1,12 +1,15 @@
 #include "world_handler.hpp"
 
+#include <exception>
 #include <glm/glm.hpp>
+#include <spdlog/spdlog.h>
 
 #include "../../event/event.hpp"
 #include "../../packet/game/world.hpp"
 #include "../../world/world.hpp"
 #include "../../world/object.hpp"
 #include "../../world/tile.hpp"
+#include "../../item/item_database.hpp"
 #include "../../player/player.hpp"
 #include "../../utils/byte_stream.hpp"
 
@@ -104,7 +107,21 @@ void WorldHandler::setup_send_map_data_handler()
                 return;
             }
 
-            world::World::instance().serialize(pkt->extra.data(), pkt->extra.size());
+            // Parsing is best-effort: a failure must never take the proxy down,
+            // the raw packet is still forwarded to the client unchanged.
+            try {
+                if (!world::World::instance().serialize(pkt->extra.data(), pkt->extra.size())) {
+                    spdlog::warn(
+                        "Failed to fully parse world data (world version {}, {} bytes, items.dat {}); "
+                        "world state may be incomplete",
+                        world::World::instance().get_version(),
+                        pkt->extra.size(),
+                        item::ItemDatabase::instance().empty() ? "not loaded" : "loaded"
+                    );
+                }
+            } catch (const std::exception& e) {
+                spdlog::error("Exception while parsing world data: {}", e.what());
+            }
         })
     );
 }
