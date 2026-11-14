@@ -1,4 +1,5 @@
 #pragma once
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -34,6 +35,11 @@ public:
 
     void flush() const;
 
+    // Called from the main loop: warns when the Growtopia server does not
+    // answer a connection attempt, with packet counters that tell "no reply at
+    // all" (firewall / network / blocked) apart from a protocol problem.
+    void check_connect_progress();
+
 protected:
     void on_connect(ENetPeer* peer) override;
     void on_receive(ENetPeer* peer, std::span<const std::byte> data) override;
@@ -48,5 +54,11 @@ private:
     event::Dispatcher& dispatcher_;
     ENetPeer* peer_;
     std::optional<std::pair<std::string, std::uint16_t>> last_target_;
+
+    bool connected_{ false };
+    int connect_warnings_{ 0 };
+    std::chrono::steady_clock::time_point connect_started_{};
+    std::uint32_t sent_at_connect_{ 0 };
+    std::uint32_t received_at_connect_{ 0 };
 };
 }

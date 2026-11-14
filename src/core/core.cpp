@@ -113,6 +113,7 @@ void Core::run() const
 
         server_->process();
         client_->process();
+        client_->check_connect_progress();
         script_scheduler_->update(elapsed);
 
         if (sleep_duration > std::chrono::microseconds::zero()) {

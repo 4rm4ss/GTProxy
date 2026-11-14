@@ -1,6 +1,8 @@
 #include "client.hpp"
 
+#include <chrono>
 #include <stdexcept>
+#include <string>
 #include <spdlog/spdlog.h>
 
 #include "../packet/packet_event_registry.hpp"
@@ -70,6 +72,11 @@ bool Client::connect(const std::string& host, std::uint16_t port)
     address.port = port;
 
     last_target_ = std::make_pair(host, port);
+    connected_ = false;
+    connect_warnings_ = 0;
+    connect_started_ = std::chrono::steady_clock::now();
+    sent_at_connect_ = host_->totalSentPackets;
+    received_at_connect_ = host_->totalReceivedPackets;
 
     peer_ = enet_host_connect(host_, &address, 2, 0);
     if (!peer_) {
@@ -82,13 +89,18 @@ bool Client::connect(const std::string& host, std::uint16_t port)
 
 void Client::on_connect(ENetPeer* peer)
 {
+    const auto elapsed{ std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - connect_started_
+    ) };
     spdlog::info(
-        "Proxy client connected to Growtopia server at {}:{}",
+        "Proxy client connected to Growtopia server at {}:{} (in {} ms)",
         utils::network::format_ip_address(peer->address.host),
-        peer->address.port
+        peer->address.port,
+        elapsed.count()
     );
 
     peer_ = peer;
+    connected_ = true;
 
     const event::ConnectionEvent evt{ event::Type::ServerConnect };
     dispatcher_.dispatch(evt);
@@ -139,6 +151,19 @@ void Client::on_disconnect(ENetPeer* peer)
         return;
     }
 
+    if (!connected_) {
+        spdlog::error(
+            "Could not connect to Growtopia server {}:{}: timed out (sent {} UDP packets, received {})",
+            last_target_ ? last_target_->first : std::string{ "?" },
+            last_target_ ? last_target_->second : 0,
+            host_->totalSentPackets - sent_at_connect_,
+            host_->totalReceivedPackets - received_at_connect_
+        );
+    } else {
+        spdlog::info("Growtopia server closed the connection");
+    }
+    connected_ = false;
+
     peer_ = nullptr;
 
     const event::ConnectionEvent evt{ event::Type::ServerDisconnect };
@@ -183,8 +208,49 @@ void Client::disconnect_now()
         return;
     }
 
+    if (!connected_ && is_active()) {
+        spdlog::warn(
+            "Gave up connecting to Growtopia server {}:{} after {} s (sent {} UDP packets, received {})",
+            last_target_ ? last_target_->first : std::string{ "?" },
+            last_target_ ? last_target_->second : 0,
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - connect_started_).count(),
+            host_->totalSentPackets - sent_at_connect_,
+            host_->totalReceivedPackets - received_at_connect_
+        );
+    }
+
     enet_peer_disconnect_now(peer_, 0);
     peer_ = nullptr;
+    connected_ = false;
+}
+
+void Client::check_connect_progress()
+{
+    if (!peer_ || connected_ || !is_active() || connect_warnings_ >= 3) {
+        return;
+    }
+
+    const auto elapsed{ std::chrono::steady_clock::now() - connect_started_ };
+    const auto due{ std::chrono::seconds{ 5 } * (connect_warnings_ + 1) };
+    if (elapsed < due) {
+        return;
+    }
+
+    ++connect_warnings_;
+    const auto sent{ host_->totalSentPackets - sent_at_connect_ };
+    const auto received{ host_->totalReceivedPackets - received_at_connect_ };
+    spdlog::warn(
+        "Still connecting to Growtopia server {}:{} after {} s: sent {} UDP packets, received {}{}",
+        last_target_ ? last_target_->first : std::string{ "?" },
+        last_target_ ? last_target_->second : 0,
+        std::chrono::duration_cast<std::chrono::seconds>(elapsed).count(),
+        sent,
+        received,
+        received == 0
+            ? " - the server does not answer: check that Windows Firewall allows Proxy.exe "
+              "(Private and Public), antivirus/VPN, or whether this IP is blocked"
+            : " - the server answers but does not accept the connection (protocol mismatch?)"
+    );
 }
 
 bool Client::is_active() const

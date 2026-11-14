@@ -1,6 +1,7 @@
 #include "server.hpp"
 
 #include <stdexcept>
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 
 #include "../packet/packet_decoder.hpp"
@@ -15,7 +16,11 @@ Server::Server(core::Config& config, event::Dispatcher& dispatcher)
     , peer_{ nullptr }
 {
     if (!host_) {
-        throw std::runtime_error{"Failed to create proxy server host"};
+        throw std::runtime_error{ fmt::format(
+            "Failed to open UDP port {} for the game: it is already in use "
+            "(is another GTProxy window still open?)",
+            config.get_server_config().port
+        ) };
     }
 
     spdlog::info(
