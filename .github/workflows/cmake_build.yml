@@ -69,6 +69,7 @@ jobs:
             Where-Object { $_.FullName -notmatch "\\CMakeFiles\\" } |
             ForEach-Object { Copy-Item $_.FullName $out -Force }
           Copy-Item "${{github.workspace}}\README.md" $out
+          Copy-Item "${{github.workspace}}\dist\windows\*" $out
           Get-ChildItem -Recurse $out | Select-Object FullName, Length | Format-Table -AutoSize
 
       - name: Smoke test
