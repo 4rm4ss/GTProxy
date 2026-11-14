@@ -96,10 +96,14 @@ jobs:
             $text = (Get-Content stdout.log -Raw -ErrorAction SilentlyContinue)
             if ($text -match "Core initialized successfully") { $ok = $true; break }
           }
-          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Start-Sleep -Seconds 1 }
+          # Let the session log's once-a-second flush run before the hard stop.
+          if (-not $p.HasExited) { Start-Sleep -Seconds 2; Stop-Process -Id $p.Id -Force; Start-Sleep -Seconds 1 }
           Get-Content stdout.log, stderr.log -ErrorAction SilentlyContinue
           if (-not $ok) { throw "Proxy.exe did not start" }
-          $session = Get-ChildItem "logs\session-*.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # The log of the real run (the --bogus-option run above writes its own).
+          $session = Get-ChildItem "logs\session-*.txt" -ErrorAction SilentlyContinue |
+            Where-Object { -not (Select-String -Path $_.FullName -Pattern "Unknown option" -Quiet) } |
+            Select-Object -First 1
           if (-not $session) { throw "no session log in logs\" }
           Write-Host "Session log: $($session.Name) ($($session.Length) bytes)"
           foreach ($f in "resources\ca.pem", "resources\server.pem", "resources\server.key.pem") {
