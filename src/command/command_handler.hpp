@@ -1,6 +1,7 @@
 #pragma once
 #include "command_registry.hpp"
 #include "../core/config.hpp"
+#include "../core/handlers/feature_handler.hpp"
 #include "../core/scheduler.hpp"
 #include "../event/event.hpp"
 #include "../network/client.hpp"
@@ -14,7 +15,8 @@ public:
         event::Dispatcher& dispatcher,
         std::shared_ptr<core::Scheduler> scheduler,
         network::Server& server,
-        network::Client& client
+        network::Client& client,
+        core::handlers::FeatureHandler& features
     );
     ~CommandHandler();
 
@@ -25,6 +27,8 @@ private:
     void register_default_commands();
 
     void on_text_packet(const event::Event& e);
+    void on_dialog_return(const event::Event& e);
+    bool run(const std::string& command_line);
 
 private:
     core::Config& config_;
@@ -32,8 +36,10 @@ private:
     std::shared_ptr<core::Scheduler> scheduler_;
     network::Server& server_;
     network::Client& client_;
+    core::handlers::FeatureHandler& features_;
 
     CommandRegistry registry_;
     event::Dispatcher::Handle listener_handle_;
+    event::Dispatcher::Handle dialog_listener_handle_;
 };
 }

@@ -90,6 +90,25 @@ problem.
 
 Remove the hosts entries to play without the proxy.
 
+### In-game commands
+
+Type them in the game chat; the proxy answers them itself (they never reach the
+server). `/proxyhelp` lists everything, including commands added by Lua scripts.
+
+| Command | What it does |
+|---------|--------------|
+| `/proxy` | Menu with the features below (warp, nick, netIDs, info, item search) |
+| `/warp <world> [door]` | Exit and join a world (or a door in it), like typing the name in the world menu |
+| `/back` | Return to the previous world |
+| `/rejoin` | Exit and enter the current world again |
+| `/nick [name]` | Show another name above you, only on your screen; `/nick` alone resets |
+| `/netid` | Show/hide netIDs next to player names (your screen only) |
+| `/pos` | Your tile position |
+| `/players` | Players you can see in this world |
+| `/world` | World name, size, players, dropped items |
+| `/find <text>` / `/item <id>` | Search items.dat by name / show an item |
+| `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen (rainbow is a Lua script) |
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](https://github.com/ZTzTopia/GTProxy/blob/main/LICENSE) file for details.

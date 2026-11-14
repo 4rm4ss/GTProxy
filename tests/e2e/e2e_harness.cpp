@@ -22,6 +22,7 @@
 
 #include <enet/enet.h>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include "item/item_database.hpp"
 #include "packet/packet_types.hpp"
@@ -246,12 +247,12 @@ std::optional<packet::PacketVariant> parse_variant(const Bytes& data)
     return variant;
 }
 
-Bytes build_world(const std::uint16_t lock_item_id)
+Bytes build_world(const std::uint16_t lock_item_id, const std::string& name = "E2ETESTWORLD")
 {
     utils::ByteStream<> bs{};
     bs.write<std::uint16_t>(0x18);              // world version
     bs.write<std::uint32_t>(0);                 // unknown
-    bs.write(std::string{ "E2ETESTWORLD" });
+    bs.write(name);
 
     constexpr std::int32_t width{ 10 };
     constexpr std::int32_t height{ 6 };
@@ -314,12 +315,255 @@ Bytes build_world(const std::uint16_t lock_item_id)
     return bs.take_data();
 }
 
+// Text of a NET_MESSAGE_GENERIC_TEXT / GAME_MESSAGE packet (without the 0).
+std::optional<std::string> parse_text(const Bytes& data)
+{
+    if (data.size() < 4) {
+        return std::nullopt;
+    }
+
+    std::uint32_t type{};
+    std::memcpy(&type, data.data(), sizeof(type));
+    if (type != packet::NET_MESSAGE_GENERIC_TEXT && type != packet::NET_MESSAGE_GAME_MESSAGE) {
+        return std::nullopt;
+    }
+
+    std::string text{ reinterpret_cast<const char*>(data.data() + 4), data.size() - 4 };
+    while (!text.empty() && text.back() == '\0') {
+        text.pop_back();
+    }
+    return text;
+}
+
 Bytes map_data_packet(const Bytes& world)
 {
     packet::GameUpdatePacket header{};
     header.type = packet::PACKET_SEND_MAP_DATA;
     header.net_id = static_cast<std::uint32_t>(-1);
     return game_packet(header, world);
+}
+
+std::string spawn_text(const int net_id, const std::string& name, const bool local)
+{
+    return fmt::format(
+        "spawn|avatar\nnetID|{0}\nuserID|{1}\neid|e2e\nip|-\ncolrect|0|0|20|30\nposXY|64|96\nname|{2}\n"
+        "titleIcon|{{\"PlayerWorldID\":{0},\"TitleTexture\":\"\"}}\ncountry|ru\ninvis|0\nmstate|0\nsmstate|0\n"
+        "onlineID|\nfutureField|keep-me{3}",
+        net_id, 1000 + net_id, name, local ? "\ntype|local" : ""
+    );
+}
+
+Bytes call_with_net_id(const packet::PacketVariant& variant, const std::int32_t net_id)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_CALL_FUNCTION;
+    header.net_id = static_cast<std::uint32_t>(net_id);
+    return game_packet(header, variant.serialize());
+}
+
+std::uint32_t net_id_of(const Bytes& data)
+{
+    packet::GameUpdatePacket header{};
+    std::memcpy(&header, data.data() + sizeof(std::uint32_t), sizeof(header));
+    return header.net_id;
+}
+
+// Next packet the endpoint receives that is a call of `function`.
+std::optional<std::pair<packet::PacketVariant, Bytes>> receive_call(Endpoint& ep, const std::string& function, const std::chrono::milliseconds timeout = 3000ms)
+{
+    const auto deadline{ std::chrono::steady_clock::now() + timeout };
+    while (std::chrono::steady_clock::now() < deadline) {
+        const auto got{ receive(ep, std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now())) };
+        if (!got) {
+            break;
+        }
+        if (const auto variant{ parse_variant(*got) }; variant && variant->get<std::string>(0) == function) {
+            return std::make_pair(*variant, *got);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> receive_text(Endpoint& ep, const std::chrono::milliseconds timeout = 3000ms)
+{
+    const auto got{ receive(ep, timeout) };
+    return got ? parse_text(*got) : std::nullopt;
+}
+
+void input(Endpoint& client, const std::string& text)
+{
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + text));
+}
+
+void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint16_t lock_item_id)
+{
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    // The server spawns us and another player; both reach the game unchanged.
+    const std::string local_spawn{ spawn_text(5, "`wE2EPlayer``", true) };
+    const std::string other_spawn{ spawn_text(6, "`2Other``", false) };
+    for (const auto& text : { local_spawn, other_spawn }) {
+        const Bytes spawn{ variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, text }) };
+        send(game_server, spawn);
+        const auto got{ receive(client) };
+        check(got && same_payload(spawn, *got), "OnSpawn forwarded unchanged while no feature is on");
+    }
+
+    // /nick: the game gets OnNameChanged for our netID with the title JSON.
+    input(client, "/nick Tester");
+    {
+        const auto call{ receive_call(client, "OnNameChanged") };
+        check(call.has_value(), "/nick sends OnNameChanged to the game");
+        if (call) {
+            const auto& [variant, bytes] = *call;
+            check(net_id_of(bytes) == 5, "OnNameChanged targets the local netID");
+            check(variant.size() == 3 && variant.get<std::string>(1) == "`wTester``", "nick shown as `wTester``");
+            check(
+                variant.size() == 3 && variant.get<std::string>(2) == "{\"PlayerWorldID\":5,\"TitleTexture\":\"\"}",
+                "OnNameChanged carries the title JSON from OnSpawn (game 5.x needs it)"
+            );
+        }
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        check(reply.has_value(), "/nick confirms in the console");
+        pump_for(200ms);
+        check(game_server.inbox.empty(), "/nick is not sent to the game server");
+    }
+
+    // The server renames us (e.g. after a title change): the nick stays.
+    {
+        const packet::PacketVariant rename{ std::string{ "OnNameChanged" }, std::string{ "`wE2EPlayer``" }, std::string{ "{\"t\":2}" } };
+        send(game_server, call_with_net_id(rename, 5));
+        const auto call{ receive_call(client, "OnNameChanged") };
+        check(
+            call && call->first.size() == 3 && call->first.get<std::string>(1) == "`wTester``" && call->first.get<std::string>(2) == "{\"t\":2}",
+            "server OnNameChanged for us keeps the nick and the server's title"
+        );
+    }
+
+    // Spawning again (re-entering) shows the nick; every other field is kept.
+    {
+        send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, local_spawn }));
+        const auto call{ receive_call(client, "OnSpawn") };
+        std::string expected{ local_spawn };
+        expected.replace(expected.find("`wE2EPlayer``"), std::string{ "`wE2EPlayer``" }.size(), "`wTester``");
+        check(call && call->first.get<std::string>(1) == expected, "local OnSpawn shows the nick, all other fields unchanged");
+    }
+
+    // /nick without a name: back to the real name.
+    input(client, "/nick");
+    {
+        const auto call{ receive_call(client, "OnNameChanged") };
+        check(call && call->first.get<std::string>(1) == "`wE2EPlayer``", "/nick alone restores the real name");
+        std::ignore = receive_call(client, "OnConsoleMessage");
+    }
+
+    // /netid shows netIDs next to both names; again hides them.
+    input(client, "/netid");
+    {
+        std::vector<std::string> names;
+        for (int i = 0; i < 2; ++i) {
+            if (const auto call{ receive_call(client, "OnNameChanged") }) {
+                names.push_back(call->first.get<std::string>(1));
+            }
+        }
+        std::ranges::sort(names);
+        check(
+            names == std::vector<std::string>{ "`2Other`` `4[6]``", "`wE2EPlayer`` `4[5]``" },
+            fmt::format("/netid shows netIDs next to names ({})", fmt::join(names, ", "))
+        );
+        std::ignore = receive_call(client, "OnConsoleMessage");
+    }
+    input(client, "/NetId");
+    {
+        int restored{ 0 };
+        for (int i = 0; i < 2; ++i) {
+            if (const auto call{ receive_call(client, "OnNameChanged") }; call && call->first.get<std::string>(1).find('[') == std::string::npos) {
+                ++restored;
+            }
+        }
+        check(restored == 2, "/NetId (any case) hides netIDs again");
+        std::ignore = receive_call(client, "OnConsoleMessage");
+    }
+
+    // /proxy opens the menu dialog; its buttons are handled by the proxy.
+    input(client, "/proxy");
+    {
+        const auto call{ receive_call(client, "OnDialogRequest") };
+        const std::string dialog{ call ? call->first.get<std::string>(1) : "" };
+        check(dialog.find("end_dialog|gtproxy_menu|") != std::string::npos, "/proxy opens the GTProxy menu");
+        check(dialog.find("add_text_input|world|") != std::string::npos && dialog.find("add_button|warp|") != std::string::npos, "menu has warp input and button");
+        check(dialog.find("World: `wE2ETESTWORLD``") != std::string::npos, "menu shows the current world");
+        check(dialog.find("add_button|rainbow|") != std::string::npos, "menu offers the Lua rainbow command");
+    }
+
+    send(client, text_packet(
+        packet::NET_MESSAGE_GENERIC_TEXT,
+        "action|dialog_return\ndialog_name|gtproxy_menu\nworld|\nnick|\nshow_netid|0\nfind|\nbuttonClicked|world_info\n"
+    ));
+    {
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        check(reply && reply->first.get<std::string>(1).find("E2ETESTWORLD") != std::string::npos, "menu 'World info' answers with the world name");
+        pump_for(200ms);
+        check(game_server.inbox.empty(), "menu buttons are not sent to the game server");
+    }
+
+    send(client, text_packet(
+        packet::NET_MESSAGE_GENERIC_TEXT,
+        "action|dialog_return\ndialog_name|gtproxy_menu\nworld|\nnick|\nshow_netid|0\nfind|dirt\nbuttonClicked|find_item\n"
+    ));
+    {
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        check(reply && reply->first.get<std::string>(1).find("matching 'dirt'") != std::string::npos, "menu item search answers");
+    }
+
+    {
+        const Bytes server_dialog{ text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|dialog_return\ndialog_name|popup\nnetID|6\nbuttonClicked|trade\n") };
+        send(client, server_dialog);
+        const auto got{ receive(game_server) };
+        check(got && same_payload(server_dialog, *got), "the game's own dialogs still go to the server");
+    }
+
+    // /warp from inside a world: exit first, join after the world menu.
+    input(client, "/warp nextworld");
+    {
+        const auto quit{ receive_text(game_server) };
+        check(quit == "action|quit_to_exit", "/warp exits the current world first");
+        send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnRequestWorldSelectMenu" }, std::string{ "default|\nadd_filter|\n" } }));
+        const auto join{ receive_text(game_server) };
+        check(join == "action|join_request\nname|NEXTWORLD\ninvitedWorld|0", fmt::format("after the world menu /warp joins NEXTWORLD ({})", join.value_or("nothing")));
+        check(receive_call(client, "OnRequestWorldSelectMenu").has_value(), "world menu still reaches the game");
+    }
+
+    // Enter NEXTWORLD, then /back returns to E2ETESTWORLD the same way.
+    send(game_server, map_data_packet(build_world(lock_item_id, "NEXTWORLD")));
+    pump_for(300ms);
+    client.inbox.clear();
+    input(client, "/back");
+    {
+        const auto quit{ receive_text(game_server) };
+        check(quit == "action|quit_to_exit", "/back exits NEXTWORLD first");
+        send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnRequestWorldSelectMenu" }, std::string{ "default|\n" } }));
+        const auto join{ receive_text(game_server) };
+        check(join == "action|join_request\nname|E2ETESTWORLD\ninvitedWorld|0", fmt::format("/back joins the previous world ({})", join.value_or("nothing")));
+    }
+
+    // From the world menu /warp joins at once; a door id is passed on.
+    input(client, "/warp start shop_1");
+    {
+        const auto join{ receive_text(game_server) };
+        check(join == "action|join_request\nname|START|SHOP_1\ninvitedWorld|0", fmt::format("/warp with a door from the menu ({})", join.value_or("nothing")));
+    }
+
+    input(client, "/warp bad-name");
+    {
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        pump_for(200ms);
+        check(reply.has_value() && game_server.inbox.empty(), "/warp rejects invalid world names without sending anything");
+    }
+
+    client.inbox.clear();
+    game_server.inbox.clear();
 }
 }
 
@@ -512,6 +756,9 @@ int main(const int argc, char** argv)
         const auto got{ receive(client) };
         check(got && same_payload(world_packet, *got), "valid world data forwarded unchanged");
     }
+
+    // 8b. Proxy features: nick, netIDs, the /proxy menu, warp and back.
+    run_feature_checks(client, game_server, lock_item_id);
 
     // 9. Garbage / truncated / hostile world data must not crash the proxy.
     {

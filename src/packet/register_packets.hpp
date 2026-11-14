@@ -4,9 +4,12 @@
 #include "game/item_database.hpp"
 #include "game/server.hpp"
 #include "game/world.hpp"
+#include "game/dialog.hpp"
+#include "game/player.hpp"
 #include "game/inventory.hpp"
 #include "message/chat.hpp"
 #include "message/exit.hpp"
+#include "message/dialog.hpp"
 #include "message/input.hpp"
 #include "message/server_hello.hpp"
 
@@ -30,6 +33,7 @@ inline bool register_all_packets()
     registry.register_packet<message::ValidateWorld>();
     registry.register_packet<message::Input>();
     registry.register_packet<message::Log>();
+    registry.register_packet<message::DialogReturn>();
 
     registry.register_packet<game::Disconnect>();
     registry.register_packet<game::SendMapData>();
@@ -39,12 +43,16 @@ inline bool register_all_packets()
     registry.register_packet<game::ModifyItemInventory>();
     registry.register_packet<game::TileChangeRequest>();
     registry.register_packet<game::ItemChangeObject>();
+    registry.register_packet<game::State>();
 
     registry.register_packet<game::OnSendToServer>();
     registry.register_packet<game::OnSuperMainStartAcceptLogonHrdxs47254722215a>();
 
     registry.register_packet<game::OnSpawn>();
     registry.register_packet<game::OnRemove>();
+    registry.register_packet<game::OnNameChanged>();
+    registry.register_packet<game::OnDialogRequest>();
+    registry.register_packet<game::OnRequestWorldSelectMenu>();
 
     event_registry::register_packet_events();
     return true;

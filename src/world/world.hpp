@@ -87,6 +87,12 @@ public:
         return version_;
     }
 
+    // Name of the world from the last map data (upper case, e.g. "START").
+    [[nodiscard]] const std::string& get_name() const
+    {
+        return name_;
+    }
+
     // Returns false if the map data could not be fully parsed (e.g. the world
     // format changed in a newer game version). Never reads out of bounds.
     bool serialize(const std::byte* extended_data, const std::size_t extended_data_size)

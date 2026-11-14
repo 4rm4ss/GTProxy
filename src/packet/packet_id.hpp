@@ -19,6 +19,7 @@ enum class PacketId : std::uint32_t {
     Log,
     OnNameChanged,
     OnChangeSkin,
+    DialogReturn,
     Padding2 = 0x2000,
     Disconnect,
     TileChangeRequest,
@@ -28,11 +29,14 @@ enum class PacketId : std::uint32_t {
     SendInventoryState,
     ModifyItemInventory,
     ItemChangeObject,
+    State,
     Padding3 = 0x3000,
     OnSendToServer,
     OnSpawn,
     OnRemove,
     OnSuperMainStartAcceptLogonHrdxs47254722215a,
+    OnDialogRequest,
+    OnRequestWorldSelectMenu,
     Unknown = std::numeric_limits<std::uint32_t>::max(),
 };
 
@@ -52,12 +56,13 @@ inline std::vector<TextRegexPattern>& get_text_regex_patterns()
 {
     static std::vector<TextRegexPattern> patterns = []() {
         std::vector<TextRegexPattern> p;
-        p.emplace_back(R"(^action\|quit$)", PacketId::Quit);
-        p.emplace_back(R"(^action\|quit_to_exit$)", PacketId::QuitToExit);
-        p.emplace_back(R"(^action\|join_request$)", PacketId::JoinRequest);
-        p.emplace_back(R"(^action\|validate_world$)", PacketId::ValidateWorld);
+        p.emplace_back(R"(^action\|quit(\n|$))", PacketId::Quit);
+        p.emplace_back(R"(^action\|quit_to_exit(\n|$))", PacketId::QuitToExit);
+        p.emplace_back(R"(^action\|join_request(\n|$))", PacketId::JoinRequest);
+        p.emplace_back(R"(^action\|validate_world(\n|$))", PacketId::ValidateWorld);
         p.emplace_back(R"(^action\|input)", PacketId::Input);
-        p.emplace_back(R"(^action\|log$)", PacketId::Log);
+        p.emplace_back(R"(^action\|log(\n|$))", PacketId::Log);
+        p.emplace_back(R"(^action\|dialog_return(\n|$))", PacketId::DialogReturn);
         return p;
     }();
     return patterns;
@@ -71,6 +76,8 @@ inline const std::unordered_map<std::string_view, PacketId> VARIANT_FUNCTION_MAP
     { "OnRemove", PacketId::OnRemove },
     { "OnNameChanged", PacketId::OnNameChanged },
     { "OnChangeSkin", PacketId::OnChangeSkin },
+    { "OnDialogRequest", PacketId::OnDialogRequest },
+    { "OnRequestWorldSelectMenu", PacketId::OnRequestWorldSelectMenu },
     { "OnSuperMainStartAcceptLogonHrdxs47254722215a", PacketId::OnSuperMainStartAcceptLogonHrdxs47254722215a },
 };
 
@@ -83,6 +90,7 @@ inline const std::unordered_map<PacketType, PacketId> GAME_PACKET_MAP = {
     { PACKET_SEND_INVENTORY_STATE, PacketId::SendInventoryState },
     { PACKET_MODIFY_ITEM_INVENTORY, PacketId::ModifyItemInventory },
     { PACKET_ITEM_CHANGE_OBJECT, PacketId::ItemChangeObject },
+    { PACKET_STATE, PacketId::State },
 };
 
 [[nodiscard]] inline PacketId derive_packet_id(const TextPayload& payload)

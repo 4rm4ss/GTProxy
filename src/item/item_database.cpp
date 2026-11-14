@@ -1,5 +1,8 @@
 #include "item_database.hpp"
 
+#include <algorithm>
+#include <cctype>
+
 #include <spdlog/spdlog.h>
 #include <fstream>
 
@@ -232,6 +235,37 @@ const ItemInfo* ItemDatabase::get_item(std::uint32_t id) const
     }
 
     return &items_[id];
+}
+
+std::vector<const ItemInfo*> ItemDatabase::find(const std::string_view query, const std::size_t limit) const
+{
+    const auto lower = [](const std::string_view text) {
+        std::string out{ text };
+        std::ranges::transform(out, out.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return out;
+    };
+
+    std::vector<const ItemInfo*> exact;
+    std::vector<const ItemInfo*> partial;
+    const std::string needle{ lower(query) };
+    if (needle.empty() || limit == 0) {
+        return {};
+    }
+
+    for (const auto& item : items_) {
+        const std::string name{ lower(item.item_name) };
+        if (name == needle) {
+            exact.push_back(&item);
+        } else if (name.find(needle) != std::string::npos) {
+            partial.push_back(&item);
+        }
+    }
+
+    exact.insert(exact.end(), partial.begin(), partial.end());
+    if (exact.size() > limit) {
+        exact.resize(limit);
+    }
+    return exact;
 }
 
 void ItemDatabase::clear()

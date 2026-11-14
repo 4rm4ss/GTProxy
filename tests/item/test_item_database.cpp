@@ -257,3 +257,25 @@ TEST(ItemDatabaseTest, FailureLeavesDatabaseEmpty)
     EXPECT_TRUE(db.empty());
     EXPECT_EQ(db.get_item(0), nullptr);
 }
+
+TEST(ItemDatabaseTest, FindByNameExactMatchesFirst)
+{
+    auto& db{ item::ItemDatabase::instance() };
+    ASSERT_TRUE(db.parse(build_items_dat(27, TEST_ITEMS)));
+
+    const auto blank{ db.find("blank", 10) };
+    ASSERT_EQ(blank.size(), 2u);
+    EXPECT_EQ(blank[0]->item_name, "Blank");
+    EXPECT_EQ(blank[1]->item_name, "Blank Seed");
+
+    const auto seed{ db.find("SEED", 10) };
+    ASSERT_EQ(seed.size(), 1u);
+    EXPECT_EQ(seed[0]->item_id, 1u);
+
+    EXPECT_EQ(db.find("dirt", 10).size(), 1u);
+    EXPECT_EQ(db.find("blank", 1).size(), 1u);
+    EXPECT_TRUE(db.find("nothing", 10).empty());
+    EXPECT_TRUE(db.find("", 10).empty());
+
+    db.clear();
+}
