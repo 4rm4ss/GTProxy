@@ -43,6 +43,12 @@ constexpr const char* SUB_SERVER_ADDRESS{ "127.0.0.3" };
 
 int g_failures{ 0 };
 
+// Session settings string of the official v5.61 logon packet (argument [5]).
+constexpr const char* E2E_LOGON_SETTINGS{
+    "proto=225|choosemusic=audio/mp3/about_theme.mp3|active_holiday=0|wing_week_day=0|"
+    "enableInventoryTab=1|bigBackpack=1|seed_diary_hash=3856714732"
+};
+
 void check(const bool ok, const std::string& what)
 {
     fmt::print("[{}] {}\n", ok ? "PASS" : "FAIL", what);
@@ -409,6 +415,7 @@ int main(const int argc, char** argv)
         std::string{ "ubistatic-a.akamaihd.net" },
         std::string{ "0098/e2e/cache/" },
         std::string{ "cc.cz.madkite.freedom org.aqua.gg idv.aqua.bulldog" },
+        std::string{ E2E_LOGON_SETTINGS },
         std::uint32_t{ 1234 }
     };
     const Bytes logon_packet{ variant_packet(logon) };
@@ -430,7 +437,15 @@ int main(const int argc, char** argv)
                 args.size() > 1 && std::holds_alternative<std::uint32_t>(args[1]) && variant->get<std::uint32_t>(1) == 0u,
                 "items.dat hash replaced with 0 (unsigned) so the client downloads items.dat"
             );
-            check(args.size() > 2 && variant->get<std::string>(2) == "ubistatic-a.akamaihd.net", "other logon arguments unchanged");
+            bool others_unchanged{ args.size() == logon.size() };
+            for (std::size_t i = 0; others_unchanged && i < args.size(); ++i) {
+                others_unchanged = i == 1 || args[i] == logon.get_variants()[i];
+            }
+            check(others_unchanged, "all other logon arguments unchanged (CDN, settings string, tribute hash)");
+            check(
+                args.size() > 5 && variant->get<std::string>(5) == E2E_LOGON_SETTINGS,
+                "session settings (enableInventoryTab/bigBackpack) intact"
+            );
         }
     }
 
@@ -461,6 +476,11 @@ int main(const int argc, char** argv)
         const auto reply{ receive(client, 3000ms) };
         pump_for(300ms);
         check(reply.has_value(), fmt::format("proxy answers {} itself", command));
+        const auto reply_call{ reply ? parse_variant(*reply) : std::nullopt };
+        check(
+            reply_call && reply_call->get<std::string>(0) == "OnConsoleMessage",
+            fmt::format("{} reply is an OnConsoleMessage the game prints", command)
+        );
         check(game_server.inbox.empty(), fmt::format("{} is not leaked to the game server", command));
         client.inbox.clear();
         game_server.inbox.clear();

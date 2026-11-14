@@ -146,6 +146,19 @@ public:
                 byte_stream.read(value);
                 variants_.emplace_back(value);
             }
+            else {
+                // Unknown argument type: we cannot know its size, so refuse the
+                // whole packet. It is then forwarded untouched instead of being
+                // re-serialized with arguments missing or shifted.
+                spdlog::warn("PacketVariant: unknown argument type {} at index {}", type, index);
+                variants_.clear();
+                return false;
+            }
+        }
+
+        if (!byte_stream.good()) {
+            variants_.clear();
+            return false;
         }
 
         return true;
@@ -196,20 +209,25 @@ public:
         return std::nullopt;
     }
 
-    // Replaces an integer argument keeping the type the server used for it.
-    void set_integer(const std::size_t index, const std::int64_t value)
+    // Replaces a numeric argument keeping the type the server used for it.
+    // Arguments of any other type (strings, vectors) are never touched.
+    bool set_integer(const std::size_t index, const std::int64_t value)
     {
         if (index >= variants_.size()) {
-            return;
+            return false;
         }
 
-        if (std::holds_alternative<std::uint32_t>(variants_[index])) {
-            variants_[index] = static_cast<std::uint32_t>(value);
-        } else if (std::holds_alternative<float>(variants_[index])) {
-            variants_[index] = static_cast<float>(value);
+        auto& slot{ variants_[index] };
+        if (std::holds_alternative<std::uint32_t>(slot)) {
+            slot = static_cast<std::uint32_t>(value);
+        } else if (std::holds_alternative<std::int32_t>(slot)) {
+            slot = static_cast<std::int32_t>(value);
+        } else if (std::holds_alternative<float>(slot)) {
+            slot = static_cast<float>(value);
         } else {
-            variants_[index] = static_cast<std::int32_t>(value);
+            return false;
         }
+        return true;
     }
 
     void set(const std::size_t index, const variant& value)

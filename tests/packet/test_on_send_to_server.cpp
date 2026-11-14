@@ -140,34 +140,80 @@ TEST(OnSendToServerTest, FreshPacketFromScriptsStillWorks)
     EXPECT_EQ(std::get<std::string>(args[4]), "127.0.0.1|0|u");
 }
 
-TEST(LogonPacketTest, ReadsUnsignedItemHashAndPatchesKeepingTypes)
+TEST(LogonPacketTest, ForcingItemsDownloadChangesOnlyTheHash)
 {
+    // Layout of the official v5.61 logon packet.
+    const std::string settings{
+        "proto=225|choosemusic=audio/mp3/about_theme.mp3|active_holiday=0|enableInventoryTab=1|bigBackpack=1|seed_diary_hash=3856714732"
+    };
     const PacketVariant variant{
         std::string{ "OnSuperMainStartAcceptLogonFB211131ddf" },
         std::uint32_t{ 3735928559u },   // > INT32_MAX, sent unsigned by the server
         std::string{ "ubistatic-a.akamaihd.net" },
-        std::string{ "0098/123/cache/" },
-        std::string{ "blocked" },
-        std::uint32_t{ 77 },
-        std::string{ "future-argument" }
+        std::string{ "0098/01020126/cache/" },
+        std::string{ "cc.cz.madkite.freedom org.aqua.gg" },
+        settings,
+        std::uint32_t{ 77 }
     };
 
     game::OnSuperMainStartAcceptLogonHrdxs47254722215a pkt{};
     ASSERT_TRUE(pkt.read(make_server_payload(variant)));
     EXPECT_EQ(static_cast<std::uint32_t>(pkt.item_hash), 3735928559u);
+    EXPECT_EQ(pkt.u, "ubistatic-a.akamaihd.net");
+    EXPECT_EQ(pkt.uu, "0098/01020126/cache/");
+    EXPECT_EQ(pkt.settings, settings);
     EXPECT_EQ(pkt.player_tribute_hash, 77u);
 
     // Unmodified: byte identical.
     EXPECT_EQ(PacketHelper::serialize(pkt.write()), PacketHelper::serialize(Payload{ make_server_payload(variant) }));
 
-    // Forcing an items.dat download: only the hash changes, type stays unsigned.
+    // Forcing an items.dat download: only [1] changes, everything else is kept.
     pkt.item_hash = 0;
     const auto written{ pkt.write() };
     const auto& args{ std::get<VariantPayload>(written).variant.get_variants() };
-    ASSERT_EQ(args.size(), 7u);
-    EXPECT_EQ(std::get<std::string>(args[0]), "OnSuperMainStartAcceptLogonFB211131ddf");
+    const auto& original{ variant.get_variants() };
+    ASSERT_EQ(args.size(), original.size());
     ASSERT_TRUE(std::holds_alternative<std::uint32_t>(args[1]));
     EXPECT_EQ(std::get<std::uint32_t>(args[1]), 0u);
-    EXPECT_EQ(std::get<std::string>(args[2]), "ubistatic-a.akamaihd.net");
-    EXPECT_EQ(std::get<std::string>(args[6]), "future-argument");
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        if (i != 1) {
+            EXPECT_EQ(args[i], original[i]) << "argument " << i << " changed";
+        }
+    }
+    ASSERT_TRUE(std::holds_alternative<std::string>(args[5]));
+    EXPECT_EQ(std::get<std::string>(args[5]), settings);
+}
+
+TEST(PacketVariantTest, SetIntegerNeverReplacesStrings)
+{
+    PacketVariant variant{ std::string{ "f" }, std::int32_t{ 1 }, std::string{ "keep me" }, std::uint32_t{ 2 } };
+    EXPECT_TRUE(variant.set_integer(1, 5));
+    EXPECT_FALSE(variant.set_integer(2, 0));
+    EXPECT_TRUE(variant.set_integer(3, 6));
+    EXPECT_FALSE(variant.set_integer(9, 0));
+
+    const auto& args{ variant.get_variants() };
+    EXPECT_EQ(std::get<std::int32_t>(args[1]), 5);
+    EXPECT_EQ(std::get<std::string>(args[2]), "keep me");
+    EXPECT_EQ(std::get<std::uint32_t>(args[3]), 6u);
+}
+
+TEST(PacketVariantTest, RefusesUnknownArgumentTypes)
+{
+    // count=2: [0] string "ab", [1] type 7 (unknown)
+    const std::vector<std::byte> data{
+        std::byte{ 2 },
+        std::byte{ 0 }, std::byte{ 2 }, std::byte{ 2 }, std::byte{ 0 }, std::byte{ 0 }, std::byte{ 0 }, std::byte{ 'a' }, std::byte{ 'b' },
+        std::byte{ 1 }, std::byte{ 7 }, std::byte{ 1 }, std::byte{ 2 }, std::byte{ 3 }, std::byte{ 4 },
+    };
+    PacketVariant variant{};
+    EXPECT_FALSE(variant.deserialize(data));
+    EXPECT_EQ(variant.size(), 0u);
+}
+
+TEST(PacketVariantTest, RefusesTruncatedData)
+{
+    const std::vector<std::byte> data{ std::byte{ 1 }, std::byte{ 0 }, std::byte{ 9 }, std::byte{ 1 } };
+    PacketVariant variant{};
+    EXPECT_FALSE(variant.deserialize(data));
 }

@@ -349,6 +349,26 @@ def main():
     if mode == "hostname":
         check("via fallback dns.google" in log, "proxy log shows DoH fallback")
 
+    # Session log written next to the proxy, with secrets removed.
+    session_logs = sorted(f for f in os.listdir(os.path.join(workdir, "logs")) if f.startswith("session-")) \
+        if os.path.isdir(os.path.join(workdir, "logs")) else []
+    check(len(session_logs) == 1, f"one session log in logs/ ({session_logs})")
+    if session_logs:
+        with open(os.path.join(workdir, "logs", session_logs[-1]), encoding="utf-8", errors="replace") as f:
+            session = f.read()
+        if os.environ.get("E2E_PROXY_WRAPPER"):
+            # Under Wine the test's SIGTERM kills the Windows process outright
+            # (no console event), so there is no clean shutdown to log.
+            print("[SKIP] 'Session ended' check (proxy runs under a wrapper)")
+        else:
+            check("Session ended" in session, "session log ends with 'Session ended'")
+        check("GTProxy v" in session and "Config: server" in session, "session log has version/system/config header")
+        check("e2e-token" not in session, "login token (ltoken) redacted in session log")
+        check("e2e-uuid-token" not in session, "UUID token redacted in session log")
+        check("Connecting to Growtopia server at 127.0.0.3:17092" in session, "session log records the sub-server switch")
+        check(os.path.getsize(os.path.join(workdir, "logs", session_logs[-1])) < 5 * 1024 * 1024,
+              f"session log stays small ({os.path.getsize(os.path.join(workdir, 'logs', session_logs[-1]))} bytes)")
+
     errors = [line for line in log.splitlines() if "[error]" in line]
     print(f"\nproxy log: {log_path} ({len(errors)} error lines)")
     for line in errors[:20]:

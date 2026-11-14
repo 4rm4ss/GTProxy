@@ -71,9 +71,9 @@ struct OnSendToServer : VariantPacket<PacketId::OnSendToServer> {
         if (variant.size() >= 5) {
             PacketVariant patched = variant;
 
-            set_integer(patched, 1, port);
-            set_integer(patched, 2, token);
-            set_integer(patched, 3, user);
+            patched.set_integer(1, port);
+            patched.set_integer(2, token);
+            patched.set_integer(3, user);
 
             if (std::holds_alternative<std::string>(patched.get_variants()[4])) {
                 auto parts{ split_address(variant.get<std::string>(4)) };
@@ -94,7 +94,7 @@ struct OnSendToServer : VariantPacket<PacketId::OnSendToServer> {
                 patched.set(4, join_address(parts));
             }
 
-            if (patched.size() > 5) { set_integer(patched, 5, login_mode); }
+            patched.set_integer(5, login_mode);
             if (patched.size() > 6 && std::holds_alternative<std::string>(patched.get_variants()[6])) {
                 patched.set(6, username);
             }
@@ -138,23 +138,6 @@ private:
         return 0;
     }
 
-    // Writes an integer back using the type the server originally sent.
-    static void set_integer(PacketVariant& target, const std::size_t index, const int64_t value)
-    {
-        if (index >= target.size()) {
-            return;
-        }
-
-        const auto& current{ target.get_variants()[index] };
-        if (std::holds_alternative<uint32_t>(current)) {
-            target.set(index, static_cast<uint32_t>(value));
-        } else if (std::holds_alternative<float>(current)) {
-            target.set(index, static_cast<float>(value));
-        } else {
-            target.set(index, static_cast<int32_t>(value));
-        }
-    }
-
     [[nodiscard]] static std::vector<std::string> split_address(const std::string& text)
     {
         std::vector<std::string> parts;
@@ -187,11 +170,13 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
     // Actual function name sent by the server (its suffix changes between
     // versions, e.g. ...Hrdxs47254722215a, ...FB211131d, ...FB211131ddf).
     std::string function_name{ "OnSuperMainStartAcceptLogonHrdxs47254722215a" };
-    int32_t item_hash{};    // sent as an unsigned integer by the official server
-    std::string u;
-    std::string uu;
-    std::string uuu;
-    uint32_t player_tribute_hash{};
+    // Arguments as sent by the official server (v5.61):
+    int32_t item_hash{};            // [1] items.dat hash (sent unsigned)
+    std::string u;                  // [2] CDN host, e.g. ubistatic-a.akamaihd.net
+    std::string uu;                 // [3] CDN path, e.g. 0098/xxxxxxxx/cache/
+    std::string uuu;                // [4] blocked package list
+    std::string settings;           // [5] session settings: proto=..|enableInventoryTab=1|bigBackpack=1|...
+    uint32_t player_tribute_hash{}; // [6] player tribute hash
 
     bool read(const Payload& payload) override
     {
@@ -207,25 +192,31 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
             return false;
         }
 
-        function_name = variant.get<std::string>(0);
+        const auto string_at = [this](const std::size_t index) {
+            const auto& values{ variant.get_variants() };
+            const auto* value{ index < values.size() ? std::get_if<std::string>(&values[index]) : nullptr };
+            return value ? *value : std::string{};
+        };
+
+        function_name = string_at(0);
         item_hash = static_cast<int32_t>(variant.get_integer(1).value_or(0));
-        // Remaining arguments are optional: older/newer servers may send fewer.
-        if (variant.size() > 2) { u = variant.get<std::string>(2); }
-        if (variant.size() > 3) { uu = variant.get<std::string>(3); }
-        if (variant.size() > 4) { uuu = variant.get<std::string>(4); }
-        if (variant.size() > 5) { player_tribute_hash = static_cast<uint32_t>(variant.get_integer(5).value_or(0)); }
+        u = string_at(2);
+        uu = string_at(3);
+        uuu = string_at(4);
+        settings = string_at(5);
+        player_tribute_hash = static_cast<uint32_t>(variant.get_integer(6).value_or(0));
 
         return true;
     }
 
     Payload write() override
     {
-        // Received from the server: patch the original arguments, keeping their
-        // types and anything we do not know about.
+        // Received from the server: patch only the items.dat hash and keep every
+        // other argument exactly as sent (the settings string in particular
+        // carries what the client needs, e.g. enableInventoryTab/bigBackpack).
         if (variant.size() >= 2) {
             PacketVariant patched = variant;
             patched.set_integer(1, static_cast<uint32_t>(item_hash));
-            if (patched.size() > 5) { patched.set_integer(5, player_tribute_hash); }
             return VariantPayload{ game_packet, patched };
         }
 
@@ -235,6 +226,7 @@ struct OnSuperMainStartAcceptLogonHrdxs47254722215a : VariantPacket<PacketId::On
             u,
             uu,
             uuu,
+            settings,
             player_tribute_hash
         };
         return VariantPayload{ game_packet, fresh };

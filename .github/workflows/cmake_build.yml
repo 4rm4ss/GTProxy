@@ -59,12 +59,15 @@ jobs:
           $out = "${{github.workspace}}\output"
           New-Item -ItemType Directory -Force $out | Out-Null
           Copy-Item "$bin\*.exe" $out
+          # Debug symbols: crash reports in logs\ then show function names and lines
+          Copy-Item "$bin\*.pdb" $out -ErrorAction SilentlyContinue
           # resources/ (items.dat) and scripts/ are copied next to the exe by the build
           foreach ($dir in "resources", "scripts") {
             if (Test-Path "$bin\$dir") { Copy-Item -Recurse "$bin\$dir" $out }
           }
           # Never ship certificates/keys: each user's proxy creates its own CA on first start
           Get-ChildItem $out -Recurse -Include *.pem | Remove-Item -Force
+          if (Test-Path "$out\logs") { Remove-Item -Recurse -Force "$out\logs" }
           Get-ChildItem "${{github.workspace}}\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch "\\CMakeFiles\\" } |
             ForEach-Object { Copy-Item $_.FullName $out -Force }
@@ -90,16 +93,19 @@ jobs:
           for ($i = 0; $i -lt 60; $i++) {
             Start-Sleep -Seconds 1
             if ($p.HasExited) { break }
-            $text = (Get-Content stdout.log, proxy.log -Raw -ErrorAction SilentlyContinue) -join "`n"
+            $text = (Get-Content stdout.log -Raw -ErrorAction SilentlyContinue)
             if ($text -match "Core initialized successfully") { $ok = $true; break }
           }
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Start-Sleep -Seconds 1 }
-          Get-Content stdout.log, stderr.log, proxy.log -ErrorAction SilentlyContinue
+          Get-Content stdout.log, stderr.log -ErrorAction SilentlyContinue
           if (-not $ok) { throw "Proxy.exe did not start" }
+          $session = Get-ChildItem "logs\session-*.txt" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $session) { throw "no session log in logs\" }
+          Write-Host "Session log: $($session.Name) ($($session.Length) bytes)"
           foreach ($f in "resources\ca.pem", "resources\server.pem", "resources\server.key.pem") {
             if (-not (Test-Path $f)) { throw "missing $f" }
           }
-          $log = (Get-Content stdout.log, proxy.log -Raw -ErrorAction SilentlyContinue) -join "`n"
+          $log = (Get-Content stdout.log, $session.FullName -Raw -ErrorAction SilentlyContinue) -join "`n"
           foreach ($m in "HTTPS server listening on port 443", "Proxy server listening on port 16999", "Loaded script: rainbow.lua") {
             if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
           }

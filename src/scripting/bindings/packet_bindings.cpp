@@ -300,6 +300,7 @@ void PacketBindings::bind_game_packets(sol::state& lua)
         "u", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::u>(),
         "uu", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uu>(),
         "uuu", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::uuu>(),
+        "settings", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::settings>(),
         "player_tribute_hash", field<&packet::game::OnSuperMainStartAcceptLogonHrdxs47254722215a::player_tribute_hash>()
     );
 

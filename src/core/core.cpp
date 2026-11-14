@@ -21,6 +21,14 @@ Core::Core()
     : running_{ true }
     , scheduler_{ std::make_shared<Scheduler>() }
 {
+    spdlog::info(
+        "Config: server {} | proxy port {} | DNS {} | prefix '{}'",
+        config_.get_server_config().address,
+        config_.get_server_config().port,
+        config_.get_client_config().dns_server,
+        config_.get_command_config().prefix
+    );
+
     if (enet_initialize() != 0) {
         throw std::runtime_error{ "Failed to initialize ENet" };
     }

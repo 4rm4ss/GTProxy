@@ -22,11 +22,14 @@ add_executable(GTProxy_tests
     world/test_world_parsing.cpp
     packet/test_packet_id.cpp
     packet/test_on_send_to_server.cpp
+    packet/test_console_message.cpp
     scripting/test_field_binding.cpp
     core/test_certificate.cpp
+    core/test_session_log.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp)
+    ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src)

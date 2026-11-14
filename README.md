@@ -83,6 +83,11 @@ cmake --build build-win
    ```
 3. Start the proxy, then the game. Port 443 must be free.
 
+Each run writes `logs/session-<date>_<time>.txt` (the last 20 are kept). It
+contains the whole session, a crash report if the proxy crashes, and has login
+tokens and passwords replaced by `***`, so it can be shared when reporting a
+problem.
+
 Remove the hosts entries to play without the proxy.
 
 ## License

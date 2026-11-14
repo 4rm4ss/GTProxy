@@ -1,5 +1,8 @@
 #include "packet_decoder.hpp"
 
+#include <algorithm>
+#include <string>
+
 #include <magic_enum/magic_enum.hpp>
 
 #include "../utils/formatter/packet_variant_formatter.hpp"
@@ -11,7 +14,7 @@ namespace packet {
     const core::Config::LogConfig& log_config,
     std::string_view direction
 ) {
-    spdlog::info("[{}] Decoding packet of size {} bytes", direction, data.size());
+    spdlog::trace("[{}] Decoding packet of size {} bytes", direction, data.size());
 
     utils::ByteStream stream{ data.data(), data.size() };
 
@@ -71,10 +74,15 @@ namespace packet {
             stream.get_size() - stream.get_read_offset()
         };
 
-        spdlog::info(
-            "{} with type of {}",
+        // Movement/state updates arrive many times per second: keep them out of
+        // the session log unless tracing.
+        spdlog::log(
+            game_pkt.type == PACKET_STATE ? spdlog::level::trace : spdlog::level::info,
+            "[{}] {} with type of {} ({} bytes)",
+            direction,
             magic_enum::enum_name(msg_type),
-            magic_enum::enum_name(game_pkt.type)
+            magic_enum::enum_name(game_pkt.type),
+            data.size()
         );
 
         if (log_config.print_game_update_packet) {
@@ -117,7 +125,15 @@ namespace packet {
         }
 
         if (log_config.print_extra && extra_size > 1) {
-            spdlog::info("Extra data: {}", spdlog::to_hex(extra_view.begin(), extra_view.end()));
+            // items.dat / world data are hundreds of KB: only show the start.
+            constexpr std::size_t max_dump{ 256 };
+            const auto shown{ extra_view.first(std::min(extra_view.size(), max_dump)) };
+            spdlog::debug(
+                "Extra data ({} bytes{}): {}",
+                extra_view.size(),
+                extra_view.size() > max_dump ? fmt::format(", first {} shown", max_dump) : std::string{},
+                spdlog::to_hex(shown.begin(), shown.end())
+            );
         }
 
         GamePayload game_payload{ 

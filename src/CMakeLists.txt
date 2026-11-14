@@ -71,10 +71,18 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/libressl/include)
 
+if (WIN32)
+    # Crash reports resolve function names via dbghelp.
+    target_link_libraries(${PROJECT_NAME} dbghelp)
+endif ()
+
 if (MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE 
         /EHsc
-        /bigobj)
+        /bigobj
+        /Zi)
+    # Proxy.pdb next to the exe lets crash reports name functions and lines.
+    target_link_options(${PROJECT_NAME} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
 else ()
     target_compile_options(${PROJECT_NAME} PRIVATE
         -fexceptions)
@@ -86,7 +94,18 @@ target_compile_definitions(${PROJECT_NAME} PUBLIC
     SPDLOG_FMT_EXTERNAL
     CPPHTTPLIB_OPENSSL_SUPPORT)
 
+execute_process(
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GTPROXY_GIT_SHA
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if (NOT GTPROXY_GIT_SHA)
+    set(GTPROXY_GIT_SHA "unknown")
+endif ()
+
 target_compile_definitions(${PROJECT_NAME} PRIVATE
+    GTPROXY_GIT_SHA="${GTPROXY_GIT_SHA}"
     GTPROXY_VERSION_MAJOR=${CMAKE_PROJECT_VERSION_MAJOR}
     GTPROXY_VERSION_MINOR=${CMAKE_PROJECT_VERSION_MINOR}
     GTPROXY_VERSION_PATCH=${CMAKE_PROJECT_VERSION_PATCH})
