@@ -1,0 +1,21 @@
+[settings]
+os=Windows
+arch=x86_64
+compiler=gcc
+compiler.version=13
+compiler.libcxx=libstdc++11
+compiler.threads=posix
+compiler.exception=seh
+compiler.cppstd=23
+build_type=Release
+[buildenv]
+CC=x86_64-w64-mingw32-gcc-posix
+CXX=x86_64-w64-mingw32-g++-posix
+RC=x86_64-w64-mingw32-windres
+AR=x86_64-w64-mingw32-ar
+RANLIB=x86_64-w64-mingw32-ranlib
+STRIP=x86_64-w64-mingw32-strip
+[conf]
+tools.build:compiler_executables={'c': 'x86_64-w64-mingw32-gcc-posix', 'cpp': 'x86_64-w64-mingw32-g++-posix', 'rc': 'x86_64-w64-mingw32-windres'}
+tools.cmake.cmaketoolchain:system_name=Windows
+tools.cmake.cmaketoolchain:system_processor=x86_64

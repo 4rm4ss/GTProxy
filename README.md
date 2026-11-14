@@ -48,6 +48,21 @@ To build from source:
     $ cmake --build .
     ```
 
+### Cross-compiling for Windows on Linux
+
+With MinGW-w64 (`apt install mingw-w64`) this produces a self-contained
+`Proxy.exe` (only system DLLs):
+
+```shell
+cmake -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64-x86_64.cmake \
+  -DCONAN_HOST_PROFILE=$PWD/cmake/conan/mingw-w64-x86_64 -DCONAN_BUILD_PROFILE=default \
+  -DHTTPLIB_USE_BROTLI_IF_AVAILABLE=OFF -DHTTPLIB_USE_NON_BLOCKING_GETADDRINFO=OFF \
+  -DCMAKE_CROSSCOMPILING_EMULATOR=wine64 \
+  -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
+cmake --build build-win
+```
+
 ## Usage
 
 1. Point the game's web hosts at the proxy. Add to the hosts file

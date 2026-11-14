@@ -116,12 +116,17 @@ void ConnectionHandler::setup_connection_handlers()
         dispatcher_,
         event::Type::ClientDisconnect,
         dispatcher_.append_listener(event::Type::ClientDisconnect, [this](const event::Event&) {
-            if (!client_.is_connected()) {
+            if (!client_.is_active()) {
                 return;
             }
 
-            client_.disconnect();
-            spdlog::info("Gracefully disconnect Growtopia client from proxy server");
+            // Close the upstream connection at once: the game usually reconnects
+            // within milliseconds (sub-server switch) and the proxy's single
+            // upstream slot must be free by then. A graceful disconnect could sit
+            // behind unacknowledged data and never be sent; disconnect_now() drops
+            // the queue and notifies the server immediately.
+            client_.disconnect_now();
+            spdlog::info("Game client left; closed the connection to the Growtopia server");
         })
     );
 

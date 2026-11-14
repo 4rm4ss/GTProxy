@@ -42,6 +42,12 @@ FALLBACK_HOST = "www.growtopia2.com"
 DOH_HOSTS = ("cloudflare-dns.com", "dns.google")
 GAME_SERVER_PORT = 17091
 HOSTS_MARKER = "# gtproxy-e2e"
+# Proxies that cannot share port 443 with the fake endpoint (e.g. the Windows
+# build under Wine, which does not set SO_REUSEPORT): serve the fake endpoint on
+# another port and NAT 127.0.0.2:443 to it for the duration of the test.
+UPSTREAM_PORT = int(os.environ.get("E2E_UPSTREAM_PORT", "443"))
+NAT_RULE = ["OUTPUT", "-d", "127.0.0.2", "-p", "tcp", "--dport", "443",
+            "-j", "DNAT", "--to-destination", f"127.0.0.2:{UPSTREAM_PORT}"]
 
 FAKE_SERVER_DATA = (
     "server|127.0.0.1\n"
@@ -118,7 +124,7 @@ class ReusePortHTTPServer(HTTPServer):
 
 
 def start_fake_upstream(cert, key):
-    server = ReusePortHTTPServer((UPSTREAM_IP, 443), FakeGrowtopia)
+    server = ReusePortHTTPServer((UPSTREAM_IP, UPSTREAM_PORT), FakeGrowtopia)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     context.sni_callback = lambda sock, name, ctx: sni_names.append(name)
@@ -200,7 +206,9 @@ def main():
         return 2
     print(f"=== e2e mode: {mode} ===")
 
-    proxy_bin = os.path.join(build, "src", "Proxy")
+    # E2E_PROXY_BIN runs another proxy build, e.g. the Windows Proxy.exe under
+    # Wine: E2E_PROXY_WRAPPER=wine64 E2E_PROXY_BIN=build-win/src/Proxy.exe
+    proxy_bin = os.path.abspath(os.environ.get("E2E_PROXY_BIN") or os.path.join(build, "src", "Proxy"))
     harness_bin = os.path.join(build, "tests", "GTProxy_e2e")
     for path in (proxy_bin, harness_bin):
         if not os.path.exists(path):
@@ -228,6 +236,8 @@ def main():
         json.dump({"server": {"port": 16999, "address": address}}, f)
 
     original_hosts = patch_hosts() if mode == "hostname" else None
+    if UPSTREAM_PORT != 443:
+        subprocess.run(["iptables", "-t", "nat", "-A", *NAT_RULE], check=True)
     upstream = start_fake_upstream(upstream_cert, upstream_key)
     log_path = os.path.join(workdir, "e2e-stdout.log")
     log_file = open(log_path, "w")
@@ -307,6 +317,8 @@ def main():
         log_file.close()
         if original_hosts is not None:
             restore_hosts(original_hosts)
+        if UPSTREAM_PORT != 443:
+            subprocess.run(["iptables", "-t", "nat", "-D", *NAT_RULE], check=False)
 
     with open(log_path) as f:
         log = f.read()
