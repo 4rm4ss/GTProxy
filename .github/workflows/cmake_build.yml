@@ -49,14 +49,64 @@ jobs:
       - name: Build
         run: cmake --build ${{github.workspace}}\build --config ${{env.BUILD_TYPE}}
 
-      - name: Move program and binary
+      - name: Unit tests
+        run: ctest --test-dir ${{github.workspace}}\build -C ${{env.BUILD_TYPE}} --output-on-failure
+
+      - name: Package
+        shell: pwsh
         run: |
-          mkdir ${{github.workspace}}\output
-          copy ${{github.workspace}}\build\src\${{env.BUILD_TYPE}}\*.exe ${{github.workspace}}\output
-          copy ${{github.workspace}}\build\conan\build\*.dll ${{github.workspace}}\output
+          $bin = "${{github.workspace}}\build\src\${{env.BUILD_TYPE}}"
+          $out = "${{github.workspace}}\output"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item "$bin\*.exe" $out
+          # resources/ (items.dat) and scripts/ are copied next to the exe by the build
+          foreach ($dir in "resources", "scripts") {
+            if (Test-Path "$bin\$dir") { Copy-Item -Recurse "$bin\$dir" $out }
+          }
+          # Never ship certificates/keys: each user's proxy creates its own CA on first start
+          Get-ChildItem $out -Recurse -Include *.pem | Remove-Item -Force
+          Get-ChildItem "${{github.workspace}}\build" -Recurse -Filter *.dll -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "\\CMakeFiles\\" } |
+            ForEach-Object { Copy-Item $_.FullName $out -Force }
+          Copy-Item "${{github.workspace}}\README.md" $out
+          Get-ChildItem -Recurse $out | Select-Object FullName, Length | Format-Table -AutoSize
+
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          # Run a copy so the CA generated here never ends up in the artifact
+          $run = "${{runner.temp}}\gtproxy-smoke"
+          Copy-Item -Recurse "${{github.workspace}}\output" $run
+          Set-Location $run
+
+          & .\Proxy.exe --bogus-option
+          if ($LASTEXITCODE -ne 2) { throw "unexpected exit code $LASTEXITCODE for an unknown option" }
+          $global:LASTEXITCODE = 0
+
+          $p = Start-Process -FilePath .\Proxy.exe -WorkingDirectory $run -PassThru `
+            -RedirectStandardOutput stdout.log -RedirectStandardError stderr.log
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 1
+            if ($p.HasExited) { break }
+            $text = (Get-Content stdout.log, proxy.log -Raw -ErrorAction SilentlyContinue) -join "`n"
+            if ($text -match "Core initialized successfully") { $ok = $true; break }
+          }
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force; Start-Sleep -Seconds 1 }
+          Get-Content stdout.log, stderr.log, proxy.log -ErrorAction SilentlyContinue
+          if (-not $ok) { throw "Proxy.exe did not start" }
+          foreach ($f in "resources\ca.pem", "resources\server.pem", "resources\server.key.pem") {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+          }
+          $log = (Get-Content stdout.log, proxy.log -Raw -ErrorAction SilentlyContinue) -join "`n"
+          foreach ($m in "HTTPS server listening on port 443", "Proxy server listening on port 16999", "Loaded script: rainbow.lua") {
+            if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
+          }
+          Write-Host "Smoke test passed"
+          $global:LASTEXITCODE = 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: gtproxy-${{github.sha}}
+          name: gtproxy-windows-${{env.BUILD_TYPE}}-${{github.sha}}
           path: ${{github.workspace}}\output
