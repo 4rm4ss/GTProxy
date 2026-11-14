@@ -5,6 +5,7 @@
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
 
+#include "browser.hpp"
 #include "../packet/register_packets.hpp"
 #include "../scripting/bindings/command_bindings.hpp"
 #include "../scripting/bindings/event_bindings.hpp"
@@ -36,6 +37,7 @@ Core::Core()
     server_ = std::make_unique<network::Server>(config_, dispatcher_);
     client_ = std::make_unique<network::Client>(config_, dispatcher_);
     web_server_ = std::make_unique<WebServer>(config_, dispatcher_, *client_, *server_);
+    map_server_ = std::make_unique<MapServer>(config_.get_map_config(), map_bridge_);
 
     packet::register_all_packets();
 
@@ -44,7 +46,25 @@ Core::Core()
     world_handler_ = std::make_unique<handlers::WorldHandler>(dispatcher_);
     feature_handler_ = std::make_unique<handlers::FeatureHandler>(dispatcher_, *server_, *client_);
     inventory_handler_ = std::make_unique<handlers::InventoryHandler>(dispatcher_, *feature_handler_, "gtproxy-settings.txt");
-    command_handler_ = std::make_unique<command::CommandHandler>(config_, dispatcher_, scheduler_, *server_, *client_, *feature_handler_, *inventory_handler_);
+    map_handler_ = std::make_unique<handlers::MapHandler>(
+        dispatcher_,
+        *server_,
+        *client_,
+        *feature_handler_,
+        config_.get_map_config(),
+        map_bridge_,
+        map_server_->url()
+    );
+    command_handler_ = std::make_unique<command::CommandHandler>(
+        config_,
+        dispatcher_,
+        scheduler_,
+        *server_,
+        *client_,
+        *feature_handler_,
+        *inventory_handler_,
+        *map_handler_
+    );
 
     script_engine_ = std::make_unique<scripting::LuaEngine>();
 
@@ -71,6 +91,10 @@ Core::Core()
     script_loader_->load_all();
 
     spdlog::info("Core initialized successfully");
+
+    if (const auto url{ map_server_->url() }; url && config_.get_map_config().open_on_start) {
+        browser::open_window(*url);
+    }
 }
 
 Core::~Core()
@@ -89,12 +113,14 @@ Core::~Core()
     script_scheduler_.reset();
     command_handler_.reset();
     script_engine_.reset();
+    map_handler_.reset();
     inventory_handler_.reset();
     feature_handler_.reset();
 
     world_handler_.reset();
     forwarding_handler_.reset();
     connection_handler_.reset();
+    map_server_.reset();
     web_server_.reset();
     client_.reset();
     server_.reset();
@@ -120,6 +146,7 @@ void Core::run() const
         client_->check_connect_progress();
         feature_handler_->update();
         inventory_handler_->update();
+        map_handler_->update();
         script_scheduler_->update(elapsed);
 
         if (sleep_duration > std::chrono::microseconds::zero()) {

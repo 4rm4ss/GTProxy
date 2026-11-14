@@ -8,6 +8,7 @@ file(GLOB GTPROXY_INCLUDE_FILES
     core/handlers/*.hpp
     event/*.hpp
     item/*.hpp
+    map/*.hpp
     network/*.hpp
     packet/*.hpp
     packet/game/*.hpp
@@ -25,6 +26,7 @@ file(GLOB GTPROXY_SOURCE_FILES
     core/*.cpp
     core/handlers/*.cpp
     item/*.cpp
+    map/*.cpp
     network/*.cpp
     packet/*.cpp
     scripting/*.cpp
@@ -74,6 +76,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 if (WIN32)
     # Crash reports resolve function names via dbghelp.
     target_link_libraries(${PROJECT_NAME} dbghelp ole32 oleaut32)
+    # The map window opens through ShellExecute.
+    target_link_libraries(${PROJECT_NAME} shell32)
 endif ()
 
 if (MSVC)

@@ -11,6 +11,7 @@
 #include "commands/feature_commands.hpp"
 #include "commands/help_command.hpp"
 #include "commands/item_commands.hpp"
+#include "commands/map_commands.hpp"
 #include "commands/skin_command.hpp"
 
 namespace command {
@@ -26,7 +27,8 @@ CommandHandler::CommandHandler(
     network::Server& server,
     network::Client& client,
     core::handlers::FeatureHandler& features,
-    core::handlers::InventoryHandler& inventory
+    core::handlers::InventoryHandler& inventory,
+    core::handlers::MapHandler& map
 )
     : config_{ config }
     , dispatcher_{ dispatcher }
@@ -35,6 +37,7 @@ CommandHandler::CommandHandler(
     , client_{ client }
     , features_{ features }
     , inventory_{ inventory }
+    , map_{ map }
     , menu_{ features, inventory, registry_, [this](const std::string& line) { return run(line); } }
 {
     registry_.set_prefix(config_.get_command_config().prefix);
@@ -69,6 +72,9 @@ void CommandHandler::register_default_commands()
     registry_.add(std::make_unique<NickCommand>(features_));
     registry_.add(std::make_unique<NetIdCommand>(features_));
     registry_.add(std::make_unique<PosCommand>(features_));
+    registry_.add(std::make_unique<MapCommand>(features_, map_));
+    registry_.add(std::make_unique<GotoCommand>(features_, map_));
+    registry_.add(std::make_unique<ClickWalkCommand>(features_, map_));
     registry_.add(std::make_unique<PlayersCommand>(features_));
     registry_.add(std::make_unique<WorldInfoCommand>(features_));
     registry_.add(std::make_unique<FindItemCommand>(features_));

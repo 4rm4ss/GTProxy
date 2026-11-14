@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <deque>
@@ -24,8 +25,11 @@
 #include <enet/enet.h>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <glm/glm.hpp>
+#include <httplib.h>
 
 #include "item/item_database.hpp"
+#include "map/coords.hpp"
 #include "packet/packet_types.hpp"
 #include "packet/packet_variant.hpp"
 #include "utils/byte_stream.hpp"
@@ -805,6 +809,442 @@ void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint
 }
 }
 
+namespace {
+// --- Map window: click -> tile -> walk ---------------------------------------
+constexpr int MAP_PORT{ 17171 };
+constexpr int MAP_W{ 12 };
+constexpr int MAP_H{ 8 };
+
+// 12x8 world: dirt floor (bottom row), a rock wall at x = 6 (rows 3-6) and
+// lava at 9, 6.
+std::uint16_t map_fg(const int x, const int y)
+{
+    if (y == MAP_H - 1) {
+        return 2;
+    }
+    if (x == 6 && y >= 3) {
+        return 10;
+    }
+    if (x == 9 && y == 6) {
+        return 4;
+    }
+    return 0;
+}
+
+bool map_free(const map::TilePos tile)
+{
+    return map::in_bounds(tile, { MAP_W, MAP_H }) && map_fg(tile.x, tile.y) == 0;
+}
+
+Bytes build_map_world()
+{
+    utils::ByteStream<> bs{};
+    bs.write<std::uint16_t>(0x18);
+    bs.write<std::uint32_t>(0);
+    bs.write(std::string{ "MAPTEST" });
+    bs.write<std::int32_t>(MAP_W);
+    bs.write<std::int32_t>(MAP_H);
+    bs.write<std::uint32_t>(MAP_W * MAP_H);
+    for (int i = 0; i < 5; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    for (int y = 0; y < MAP_H; ++y) {
+        for (int x = 0; x < MAP_W; ++x) {
+            bs.write<std::uint16_t>(map_fg(x, y));
+            bs.write<std::uint16_t>(14);
+            bs.write<std::uint16_t>(0);
+            bs.write<std::uint16_t>(0);
+        }
+    }
+    for (int i = 0; i < 12; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    bs.write<std::uint32_t>(0);
+    bs.write<std::uint32_t>(0);
+    for (int i = 0; i < 16; ++i) {
+        bs.write<std::uint8_t>(0xAA);
+    }
+    return bs.take_data();
+}
+
+std::optional<packet::GameUpdatePacket> game_header(const Bytes& data)
+{
+    std::uint32_t type{};
+    if (data.size() < sizeof(type) + sizeof(packet::GameUpdatePacket)) {
+        return std::nullopt;
+    }
+    std::memcpy(&type, data.data(), sizeof(type));
+    if (type != packet::NET_MESSAGE_GAME_PACKET) {
+        return std::nullopt;
+    }
+    packet::GameUpdatePacket header{};
+    std::memcpy(&header, data.data() + sizeof(type), sizeof(header));
+    return header;
+}
+
+Bytes state_packet(const glm::vec2 position, const std::uint32_t flags)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_STATE;
+    header.net_id = 5;
+    header.flags.value = static_cast<packet::PacketFlag>(flags);
+    header.pos_x = position.x;
+    header.pos_y = position.y;
+    header.int_x = -1;
+    header.int_y = -1;
+    return game_packet(header, {});
+}
+
+Bytes tile_change(const int x, const int y, const int item)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_TILE_CHANGE_REQUEST;
+    header.net_id = 5;
+    header.int_x = x;
+    header.int_y = y;
+    header.int_data = item;
+    return game_packet(header, {});
+}
+
+// Numbers of a JSON array field, e.g. "fg":[0,2,...].
+std::vector<long long> json_numbers(const std::string& json, const std::string& key)
+{
+    std::vector<long long> values;
+    const auto start{ json.find("\"" + key + "\":[") };
+    if (start == std::string::npos) {
+        return values;
+    }
+    std::size_t i{ start + key.size() + 4 };
+    while (i < json.size() && json[i] != ']') {
+        std::size_t used{};
+        values.push_back(std::stoll(json.substr(i), &used));
+        i += used;
+        if (i < json.size() && json[i] == ',') {
+            ++i;
+        }
+    }
+    return values;
+}
+
+struct WalkLog {
+    std::vector<packet::GameUpdatePacket> states;   // what the server got
+    std::vector<Bytes> other_to_server;
+    std::vector<std::pair<std::uint32_t, glm::vec2>> set_pos; // what the game got
+    std::vector<std::string> console;
+
+    [[nodiscard]] bool said(const std::string_view text) const
+    {
+        return std::ranges::any_of(console, [&](const std::string& line) { return line.find(text) != std::string::npos; });
+    }
+};
+
+void collect(Endpoint& client, Endpoint& game_server, WalkLog& log)
+{
+    while (!game_server.inbox.empty()) {
+        Bytes data{ std::move(game_server.inbox.front()) };
+        game_server.inbox.pop_front();
+        if (const auto header{ game_header(data) }; header && header->type == packet::PACKET_STATE) {
+            log.states.push_back(*header);
+        } else {
+            log.other_to_server.push_back(std::move(data));
+        }
+    }
+    while (!client.inbox.empty()) {
+        Bytes data{ std::move(client.inbox.front()) };
+        client.inbox.pop_front();
+        const auto variant{ parse_variant(data) };
+        if (!variant) {
+            continue;
+        }
+        const auto function{ variant->get<std::string>(0) };
+        if (function == "OnSetPos") {
+            log.set_pos.emplace_back(net_id_of(data), variant->get<glm::vec2>(1));
+        } else if (function == "OnConsoleMessage") {
+            log.console.push_back(variant->get<std::string>(1));
+        }
+    }
+}
+
+bool follow_walk(Endpoint& client, Endpoint& game_server, WalkLog& log, const std::string_view until, const std::chrono::milliseconds timeout = 10000ms)
+{
+    return pump_until([&] {
+        collect(client, game_server, log);
+        return log.said(until);
+    }, timeout);
+}
+
+// GETs a map window URL until the body passes `ok` (the state is published a
+// few times a second once a window asks for it).
+std::optional<std::string> wait_json(httplib::Client& http, const std::string& path, const std::function<bool(const std::string&)>& ok, const std::chrono::milliseconds timeout = 3000ms)
+{
+    const auto deadline{ std::chrono::steady_clock::now() + timeout };
+    std::string last;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (const auto res{ http.Get(path) }; res && res->status == 200) {
+            last = res->body;
+            if (ok(last)) {
+                return last;
+            }
+        }
+        pump_for(50ms);
+    }
+    fmt::print("    last {}: {}\n", path, last.substr(0, 400));
+    return std::nullopt;
+}
+
+std::optional<std::string> map_post(httplib::Client& http, const std::string& path)
+{
+    const httplib::Headers headers{ { "X-GTProxy-Map", "1" } };
+    const auto res{ http.Post(path, headers, "", "text/plain") };
+    if (!res || res->status != 200) {
+        return std::nullopt;
+    }
+    return res->body;
+}
+
+// A click in the window at the centre of a tile (view: no scroll, zoom 1).
+std::optional<std::string> click_tile(httplib::Client& http, const int x, const int y, const int button)
+{
+    return map_post(http, fmt::format(
+        "/api/click?x={}&y={}&button={}&ox=0&oy=0&zoom=1&w=800&h=600",
+        x * 32 + 16, y * 32 + 16, button
+    ));
+}
+
+bool contains(const std::optional<std::string>& text, const std::string_view part)
+{
+    return text && text->find(part) != std::string::npos;
+}
+
+void run_map_checks(Endpoint& client, Endpoint& game_server)
+{
+    httplib::Client http{ "127.0.0.1", MAP_PORT };
+    http.set_connection_timeout(2);
+    http.set_read_timeout(5);
+
+    {
+        const auto res{ http.Get("/") };
+        check(res && res->status == 200 && res->body.find("<canvas id=\"map\">") != std::string::npos, "map window page is served on 127.0.0.1:17171");
+    }
+
+    // Enter MAPTEST and spawn at tile 1, 6 (standing on the dirt floor).
+    client.inbox.clear();
+    game_server.inbox.clear();
+    send(client, text_packet(packet::NET_MESSAGE_GAME_MESSAGE, "action|join_request\nname|MAPTEST\ninvitedWorld|0\n"));
+    check(receive(game_server).has_value(), "map: join request forwarded");
+    send(game_server, map_data_packet(build_map_world()));
+    check(receive(client).has_value(), "map: world data forwarded");
+    const std::string spawn{ fmt::format(
+        "spawn|avatar\nnetID|5\nuserID|1005\ncolrect|0|0|20|30\nposXY|32|192\nname|`wE2EPlayer``\ncountry|ru\ninvis|0\nmstate|0\nsmstate|0\nonlineID|\ntype|local"
+    ) };
+    send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, spawn }));
+    check(receive_call(client, "OnSpawn").has_value(), "map: local OnSpawn forwarded");
+
+    // The game's own movement: forwarded, and the model for the proxy's packets.
+    constexpr std::uint32_t GAME_FLAGS{ packet::PACKET_FLAG_UNK | packet::PACKET_FLAG_ON_SOLID };
+    send(client, state_packet({ 32.0f, 192.0f }, GAME_FLAGS));
+    {
+        const auto got{ receive(game_server) };
+        const auto header{ got ? game_header(*got) : std::nullopt };
+        check(header && header->type == packet::PACKET_STATE && header->pos_x == 32.0f, "map: the game's state packets are forwarded while not walking");
+    }
+
+    {
+        const auto state{ wait_json(http, "/api/state", [](const std::string& body) {
+            return body.find("\"world\":\"MAPTEST\"") != std::string::npos && body.find("\"tx\":1,\"ty\":6,\"me\":true") != std::string::npos;
+        }) };
+        check(state.has_value(), "map: /api/state shows the world and you at tile 1, 6");
+
+        const auto tiles{ wait_json(http, "/api/tiles", [](const std::string& body) {
+            return body.find("\"width\":12,\"height\":8") != std::string::npos;
+        }) };
+        check(tiles.has_value(), "map: /api/tiles has the 12x8 world");
+        if (tiles) {
+            const auto fg{ json_numbers(*tiles, "fg") };
+            const auto cell{ json_numbers(*tiles, "cell") };
+            check(fg.size() == 96 && fg[7 * 12] == 2 && fg[4 * 12 + 6] == 10, "map: tile ids (dirt floor, rock wall)");
+            check(cell.size() == 96 && cell[7 * 12] == 1 && cell[6 * 12 + 9] == 3 && cell[2 * 12 + 2] == 0, "map: walkability (solid, dangerous, free) from items.dat");
+            check(tiles->find("\"2\":{\"name\":\"Dirt\",\"color\":\"#603913\"}") != std::string::npos, "map: block colour from its seed (Dirt brown)");
+        }
+    }
+
+    // Only pages from this computer may use the map.
+    {
+        const auto no_header{ http.Post("/api/click?x=1&y=1&button=0&ox=0&oy=0&zoom=1&w=800&h=600", "", "text/plain") };
+        check(no_header && no_header->status == 403, "map: a click without the window's header is refused");
+        const auto foreign{ http.Get("/api/state", httplib::Headers{ { "Host", "evil.example:17171" } }) };
+        check(foreign && foreign->status == 403, "map: requests for another host name are refused (DNS rebinding)");
+    }
+
+    // Clicks that do nothing.
+    check(contains(map_post(http, "/api/click?x=500&y=10&button=0&ox=0&oy=0&zoom=1&w=800&h=600"), "outside the world"), "map: a click beside the world is reported, nothing sent");
+    {
+        const auto bad{ http.Post("/api/click?x=a&y=1", httplib::Headers{ { "X-GTProxy-Map", "1" } }, "", "text/plain") };
+        check(bad && bad->status == 400, "map: a malformed click is rejected");
+    }
+
+    // Right click: what is on the tile.
+    {
+        const auto info{ click_tile(http, 0, 7, 2) };
+        check(contains(info, "\"action\":\"inspect\"") && contains(info, "Tile 0, 7: Dirt (2) on Cave Background (14) - solid"), fmt::format("map: right click inspects the tile ({})", info.value_or("-")));
+    }
+
+    // Left click on 10, 6: walk over the rock wall, around the lava.
+    {
+        WalkLog log{};
+        const auto answer{ click_tile(http, 10, 6, 0) };
+        check(contains(answer, "\"ok\":true") && contains(answer, "\"tile\":{\"x\":10,\"y\":6}") && contains(answer, "Walking to 10, 6"), fmt::format("map: left click walks to the tile ({})", answer.value_or("-")));
+
+        // The game keeps sending its own position: held back while walking.
+        send(client, state_packet({ 999.0f, 999.0f }, GAME_FLAGS));
+        const bool arrived{ follow_walk(client, game_server, log, "Arrived at 10, 6") };
+        check(arrived, "map: the walk ends with 'Arrived at 10, 6' in the game console");
+        // The last position to the server may still be on its way.
+        pump_for(300ms);
+        collect(client, game_server, log);
+
+        check(log.states.size() >= 5, fmt::format("map: {} state packets sent to the server while walking", log.states.size()));
+        bool fields_ok{ true };
+        bool tiles_ok{ true };
+        bool model_kept{ true };
+        float longest{ 0.0f };
+        glm::vec2 previous{ 32.0f, 192.0f };
+        for (const auto& header : log.states) {
+            const glm::vec2 position{ header.pos_x, header.pos_y };
+            fields_ok = fields_ok && header.net_id == 5 && header.int_x == -1 && header.int_y == -1 && position.x != 999.0f;
+            model_kept = model_kept && (static_cast<std::uint32_t>(header.flags.value) & packet::PACKET_FLAG_UNK) != 0;
+            tiles_ok = tiles_ok && map_free(map::player_tile(position));
+            longest = std::max(longest, glm::length(position - previous));
+            previous = position;
+        }
+        check(fields_ok, "map: walk packets carry your netID, no punch target, and the game's held-back position never gets through");
+        check(model_kept, "map: walk packets keep the game's own flags");
+        check(tiles_ok, "map: every position is in a free tile (over the wall, not through it or the lava)");
+        check(longest > 0.0f && longest <= 40.0f, fmt::format("map: positions at most {:.1f} px apart (walking speed, not teleporting)", longest));
+        check(!log.states.empty() && log.states.back().pos_x == 320.0f && log.states.back().pos_y == 192.0f, "map: the last position is tile 10, 6 (320, 192)");
+        check(
+            log.set_pos.size() == log.states.size() && !log.set_pos.empty()
+                && log.set_pos.back().first == 5 && log.set_pos.back().second == glm::vec2{ 320.0f, 192.0f },
+            fmt::format("map: the game is moved along with OnSetPos ({} of them)", log.set_pos.size())
+        );
+        check(log.other_to_server.empty(), "map: nothing else reaches the server");
+
+        const auto state{ wait_json(http, "/api/state", [](const std::string& body) {
+            return body.find("\"walking\":false") != std::string::npos && body.find("\"tx\":10,\"ty\":6,\"me\":true") != std::string::npos;
+        }) };
+        check(contains(state, "Arrived at 10, 6"), "map: the window shows you at 10, 6 and the result");
+
+        // The game's packets go through again.
+        send(client, state_packet({ 320.0f, 192.0f }, GAME_FLAGS));
+        const auto got{ receive(game_server) };
+        const auto header{ got ? game_header(*got) : std::nullopt };
+        check(header && header->type == packet::PACKET_STATE && header->pos_x == 320.0f, "map: after the walk the game's state packets are forwarded again");
+    }
+
+    // Click on the rock wall: walk next to it; Stop ends the walk.
+    {
+        WalkLog log{};
+        const auto answer{ click_tile(http, 6, 4, 0) };
+        check(contains(answer, "Walking next to 6, 4"), fmt::format("map: a click on a block walks next to it ({})", answer.value_or("-")));
+        const auto stopped{ map_post(http, "/api/stop") };
+        check(contains(stopped, "Stopped at"), fmt::format("map: Stop ends the walk ({})", stopped.value_or("-")));
+        pump_for(300ms);
+        collect(client, game_server, log);
+        const auto sent{ log.states.size() };
+        pump_for(300ms);
+        collect(client, game_server, log);
+        check(log.states.size() == sent, "map: no more positions after Stop");
+    }
+
+    // /goto in the chat; the server moving you (door, respawn) ends the walk.
+    {
+        WalkLog log{};
+        input(client, "/goto 3 6");
+        check(follow_walk(client, game_server, log, "[map] Walking to 3, 6", 3000ms), "map: /goto 3 6 walks to the tile");
+        check(log.other_to_server.empty(), "map: /goto is not sent to the server");
+
+        packet::GameUpdatePacket header{};
+        header.type = packet::PACKET_CALL_FUNCTION;
+        header.net_id = 5;
+        send(game_server, game_packet(header, packet::PacketVariant{ std::string{ "OnSetPos" }, glm::vec2{ 64.0f, 192.0f } }.serialize()));
+        check(follow_walk(client, game_server, log, "the server put you at 2, 6", 3000ms), "map: OnSetPos from the server stops the walk");
+        check(std::ranges::any_of(log.set_pos, [](const auto& p) { return p.second == glm::vec2{ 64.0f, 192.0f }; }), "map: the server's OnSetPos still reaches the game");
+
+        const auto state{ wait_json(http, "/api/state", [](const std::string& body) {
+            return body.find("\"tx\":2,\"ty\":6,\"me\":true") != std::string::npos;
+        }) };
+        check(state.has_value(), "map: OnSetPos moves you on the map too");
+
+        WalkLog usage{};
+        input(client, "/goto x");
+        check(follow_walk(client, game_server, usage, "Usage", 3000ms), "map: /goto with bad arguments shows the usage");
+    }
+
+    // /clickwalk: a punch in the game becomes a walk; off again, punches pass.
+    {
+        WalkLog log{};
+        input(client, "/clickwalk");
+        check(follow_walk(client, game_server, log, "Click-walk", 3000ms) && log.said("on"), "map: /clickwalk turns click-walk on");
+        send(client, tile_change(4, 6, 18));
+        check(follow_walk(client, game_server, log, "Arrived at 4, 6"), "map: with click-walk a click in the game walks to that tile");
+        check(log.other_to_server.empty(), "map: the click (punch) is not sent to the server");
+
+        input(client, "/clickwalk");
+        check(follow_walk(client, game_server, log, "Click-walk `4off", 3000ms), "map: /clickwalk again turns it off");
+        // Let the last position of the walk arrive first.
+        pump_for(300ms);
+        collect(client, game_server, log);
+        log.other_to_server.clear();
+
+        send(client, tile_change(5, 6, 18));
+        const bool punched{ pump_until([&] {
+            collect(client, game_server, log);
+            return std::ranges::any_of(log.other_to_server, [](const Bytes& data) {
+                const auto header{ game_header(data) };
+                return header && header->type == packet::PACKET_TILE_CHANGE_REQUEST && header->int_x == 5;
+            });
+        }, 3000ms) };
+        check(punched, "map: without click-walk punches reach the server");
+    }
+
+    // The map follows what the server changes.
+    {
+        send(game_server, tile_change(0, 7, 18));      // dirt punched away
+        utils::ByteStream<> tile{};
+        tile.write<std::uint16_t>(10);                  // rock
+        tile.write<std::uint16_t>(14);
+        tile.write<std::uint16_t>(0);
+        tile.write<std::uint16_t>(0);
+        packet::GameUpdatePacket header{};
+        header.type = packet::PACKET_SEND_TILE_UPDATE_DATA;
+        header.int_x = 8;
+        header.int_y = 5;
+        send(game_server, game_packet(header, tile.take_data()));
+
+        const auto tiles{ wait_json(http, "/api/tiles", [](const std::string& body) {
+            const auto fg{ json_numbers(body, "fg") };
+            return fg.size() == 96 && fg[7 * 12] == 0 && fg[5 * 12 + 8] == 10;
+        }) };
+        check(tiles.has_value(), "map: tiles broken (TileChangeRequest) and re-sent (SendTileUpdateData) by the server show up");
+        if (tiles) {
+            const auto cell{ json_numbers(*tiles, "cell") };
+            check(cell.size() == 96 && cell[7 * 12] == 0 && cell[5 * 12 + 8] == 1, "map: and count for walking");
+        }
+    }
+
+    // E2E_MAP_HOLD_SECONDS=N keeps you in MAPTEST for N seconds, e.g. to try
+    // the map window in a browser while the fake server answers.
+    if (const char* hold{ std::getenv("E2E_MAP_HOLD_SECONDS") }) {
+        fmt::print("Holding the map world for {} s\n", hold);
+        std::fflush(stdout);
+        pump_for(std::chrono::seconds{ std::atoi(hold) });
+    }
+
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+}
+
 int main(const int argc, char** argv)
 {
     if (argc < 2) {
@@ -1002,6 +1442,9 @@ int main(const int argc, char** argv)
 
     // 8c. Item tools: /dd, /dw, /dropall, fast drop.
     run_item_checks(client, game_server, lock_item_id);
+
+    // 8d. Map window: cursor -> tile, walking, /goto, /clickwalk.
+    run_map_checks(client, game_server);
 
     // 9. Garbage / truncated / hostile world data must not crash the proxy.
     {

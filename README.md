@@ -118,10 +118,56 @@ command, including those added by Lua scripts.
 | `/fastdrop`, `/fasttrash` | Skip the "how many?" window when you drop / trash (fast trash never applies to locks) |
 | `/keep [add\|del] <item>` | Items `/dropall` never drops |
 | `/balance` | Your locks in World Locks |
+| `/map` | Open the map window (see below) |
+| `/goto <x> <y>` | Walk to a tile; `/goto stop` stops |
+| `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching |
 
 Drops are the same request and "how many?" answer the game sends when you
 press Drop, one stack at a time, each waiting for the server's reply (with a
 pause of 200 ms by default). Item settings are saved in `gtproxy-settings.txt`.
+
+### Map window
+
+`/map` (or *Map window* in `/proxy`) opens the world you are in as a map in its
+own window: on Windows a Microsoft Edge app window, elsewhere the default
+browser. It is served by the proxy itself at `http://127.0.0.1:17171/`, only
+reachable from your computer, and shows blocks (in the colours of their seeds),
+dangerous tiles, doors, players, dropped items and your path.
+
+- **Left click** a tile: walk there. A click on a block walks to the free tile
+  next to it, on your side.
+- **Right click**: what is on the tile (blocks, players, dropped items).
+- **Drag** moves the map, the **wheel** zooms; **C** centres on you, **F**
+  follows you, **Esc** stops walking. The header shows the tile under the cursor.
+
+How walking works: the proxy turns the cursor into a tile with the same
+conversion the window uses (`src/map/coords.hpp`), finds a path through free
+tiles (A*, `src/map/pathfinder.cpp`; blocks are judged by their collision type
+in items.dat), then sends the Growtopia server the same state packets the game
+sends while you run - a position every 100 ms at 250 px/s (about 8 tiles a
+second, never more than a fraction of a tile per packet) - and moves your
+avatar in the game with `OnSetPos`. While it walks, the game's own position
+packets are held back so the two never disagree. Movement is checked by the
+Growtopia server with rules the proxy cannot see: if the server puts you
+somewhere else (door, respawn, correction) the walk stops at once.
+
+`config.json` (all optional):
+
+```json
+"map": {
+   "enabled": true,
+   "port": 17171,
+   "open_on_start": false,
+   "walk_speed": 250,
+   "step_interval_ms": 100,
+   "gravity": false,
+   "jump_height": 3
+}
+```
+
+`gravity: true` only uses paths you could run and jump along (rising at most
+`jump_height` tiles per jump, then falling); the default goes through any free
+tile.
 
 ## License
 

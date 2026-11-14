@@ -186,6 +186,7 @@ std::string Menu::main_page() const
         .section("Looks", ICON_LOOKS).button("page_looks", "Nick, netIDs, skin")
         .section("Info", ICON_INFO).button("page_info", "Players, world, item search")
         .spacer()
+        .button("map", "Map window (click a tile to walk there)")
         .button("commands", "All proxy commands");
     return d.end(Page::Main);
 }
@@ -477,6 +478,7 @@ void Menu::handle(const packet::message::DialogReturn& dialog)
     else if (button == "players") { run_("players"); }
     else if (button == "world_info") { run_("world"); }
     else if (button == "pos") { run_("pos"); }
+    else if (button == "map") { run_("map"); }
     else if (button == "find_item") { with_text("find", "find", "`4Oops: ``Type part of an item name first."); }
     else if (button == "item_info") { with_text("item", "item_id", "`4Oops: ``Type an item ID first."); }
     else if (button == "commands") { show(Page::Commands); }

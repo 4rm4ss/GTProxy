@@ -30,12 +30,25 @@ add_executable(GTProxy_tests
     core/test_features.cpp
     core/test_inventory.cpp
     network/test_enet_packet.cpp
+    map/test_coords.cpp
+    map/test_grid.cpp
+    map/test_pathfinder.cpp
+    map/test_movement.cpp
+    map/test_click.cpp
+    map/test_snapshot.cpp
+    world/test_world_updates.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
     ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp
     ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp
     ${CMAKE_SOURCE_DIR}/src/core/features.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/inventory.cpp)
+    ${CMAKE_SOURCE_DIR}/src/core/inventory.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/grid.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/pathfinder.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/movement.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/click.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/bridge.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/snapshot.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -76,6 +89,7 @@ if (GTPROXY_BUILD_E2E)
 
     target_link_libraries(GTProxy_e2e PRIVATE
         enet
+        httplib::httplib
         fmt::fmt
         spdlog::spdlog
         glm::glm

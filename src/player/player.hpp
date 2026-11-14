@@ -49,6 +49,12 @@ public:
     [[nodiscard]] int32_t mod_state() const noexcept { return mod_state_; }
     [[nodiscard]] int32_t supermod_state() const noexcept { return supermod_state_; }
 
+    // World pixels (32 per tile), from state packets and OnSetPos.
+    void set_position(const glm::vec2& position)
+    {
+        position_ = glm::i32vec2{ static_cast<int32_t>(position.x), static_cast<int32_t>(position.y) };
+    }
+
 private:
     int32_t net_id_;
     int32_t user_id_;

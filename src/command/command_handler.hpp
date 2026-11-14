@@ -3,6 +3,7 @@
 #include "../core/config.hpp"
 #include "../core/handlers/feature_handler.hpp"
 #include "../core/handlers/inventory_handler.hpp"
+#include "../core/handlers/map_handler.hpp"
 #include "menu.hpp"
 #include "../core/scheduler.hpp"
 #include "../event/event.hpp"
@@ -19,7 +20,8 @@ public:
         network::Server& server,
         network::Client& client,
         core::handlers::FeatureHandler& features,
-        core::handlers::InventoryHandler& inventory
+        core::handlers::InventoryHandler& inventory,
+        core::handlers::MapHandler& map
     );
     ~CommandHandler();
 
@@ -41,6 +43,7 @@ private:
     network::Client& client_;
     core::handlers::FeatureHandler& features_;
     core::handlers::InventoryHandler& inventory_;
+    core::handlers::MapHandler& map_;
     Menu menu_;
 
     CommandRegistry registry_;

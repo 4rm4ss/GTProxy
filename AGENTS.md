@@ -63,6 +63,7 @@ src/
 ├── packet/         # Packet types, encoding/decoding, event handling
 │   ├── game/       # Game-specific packet handlers
 │   └── message/    # Message packet types
+├── map/            # Map window: coordinates, cursor -> tile, paths, walking, page
 ├── world/          # World entity and state management
 ├── player/         # Player entity and state management
 ├── command/        # In-proxy command system

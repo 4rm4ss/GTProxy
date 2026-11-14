@@ -183,6 +183,8 @@ struct SendMapData : GamePacket<PacketId::SendMapData, PACKET_SEND_MAP_DATA> {
     }
 };
 
+// One tile sent again in full; game_packet.int_x / int_y is the tile and the
+// extra data is the tile in the same format as in the world data.
 struct SendTileUpdateData : GamePacket<PacketId::SendTileUpdateData, PACKET_SEND_TILE_UPDATE_DATA> {
     bool read(const Payload& payload) override
     {
@@ -191,6 +193,7 @@ struct SendTileUpdateData : GamePacket<PacketId::SendTileUpdateData, PACKET_SEND
             return false;
         }
 
+        game_packet = game->packet;
         extra = game->extra;
         return true;
     }
@@ -210,10 +213,15 @@ struct SendTileUpdateData : GamePacket<PacketId::SendTileUpdateData, PACKET_SEND
     }
 };
 
+// A punch or a block placed on tile (int_x, int_y). From the game: what you
+// clicked with; from the server: what happened to the tile. The item is the
+// int_data field (18 = Fist, i.e. a punch).
 struct TileChangeRequest : GamePacket<PacketId::TileChangeRequest, PACKET_TILE_CHANGE_REQUEST> {
-    int32_t int_x;
-    int32_t int_y;
-    int32_t item_id;
+    static constexpr int32_t FIST{ 18 };
+
+    int32_t int_x{ 0 };
+    int32_t int_y{ 0 };
+    int32_t item_id{ 0 };
 
     bool read(const Payload& payload) override
     {
@@ -226,7 +234,7 @@ struct TileChangeRequest : GamePacket<PacketId::TileChangeRequest, PACKET_TILE_C
 
         int_x = game_packet.int_x;
         int_y = game_packet.int_y;
-        item_id = game_packet.item_net_id;
+        item_id = game_packet.int_data;
         return true;
     }
 
@@ -237,10 +245,11 @@ struct TileChangeRequest : GamePacket<PacketId::TileChangeRequest, PACKET_TILE_C
         }
 
         GamePayload game_payload{};
-
+        game_payload.packet = game_packet;
+        game_payload.packet.type = PACKET_TYPE;
         game_payload.packet.int_x = int_x;
         game_payload.packet.int_y = int_y;
-        game_payload.packet.item_net_id = item_id;
+        game_payload.packet.int_data = item_id;
         return game_payload;
     }
 };

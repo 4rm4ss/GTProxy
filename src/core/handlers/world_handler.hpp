@@ -21,6 +21,8 @@ private:
     void setup_send_tile_update_data_handler();
     void setup_tile_change_request_handler();
     void setup_item_change_object_handler();
+    void setup_state_handler();
+    void setup_on_set_pos_handler();
 
     event::Dispatcher& dispatcher_;
     std::vector<event::ScopedHandle> handles_;

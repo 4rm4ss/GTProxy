@@ -105,6 +105,10 @@ inline void register_packet_events() {
         make_event_builder<game::OnRemove, PacketId::OnRemove>()
     );
     registry.register_event(
+        PacketId::OnSetPos,
+        make_event_builder<game::OnSetPos, PacketId::OnSetPos>()
+    );
+    registry.register_event(
         PacketId::SendItemDatabaseData,
         make_event_builder<game::SendItemDatabaseData, PacketId::SendItemDatabaseData>()
     );

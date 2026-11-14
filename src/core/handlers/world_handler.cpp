@@ -1,10 +1,12 @@
 #include "world_handler.hpp"
 
+#include <cmath>
 #include <exception>
 #include <glm/glm.hpp>
 #include <spdlog/spdlog.h>
 
 #include "../../event/event.hpp"
+#include "../../packet/game/player.hpp"
 #include "../../packet/game/world.hpp"
 #include "../../world/world.hpp"
 #include "../../world/object.hpp"
@@ -24,6 +26,8 @@ WorldHandler::WorldHandler(event::Dispatcher& dispatcher)
     setup_send_tile_update_data_handler();
     setup_tile_change_request_handler();
     setup_item_change_object_handler();
+    setup_state_handler();
+    setup_on_set_pos_handler();
 }
 
 void WorldHandler::setup_join_request_handler()
@@ -143,15 +147,11 @@ void WorldHandler::setup_send_tile_update_data_handler()
                 return;
             }
 
-            const auto& world{ world::World::instance() };
-            world::Tile tile{};
-
-            utils::ByteStream<> bs{ pkt->extra.data(), pkt->extra.size() };
-            tile.serialize(bs, world.get_version());
-
-            // Update tile in map if coordinates are available in game_packet
-            // Note: SendTileUpdateData typically doesn't include coords in the packet itself
-            // The coordinates would need to come from parsing the extended data
+            const int x{ pkt->game_packet.int_x };
+            const int y{ pkt->game_packet.int_y };
+            if (!world::World::instance().update_tile(x, y, pkt->extra.data(), pkt->extra.size())) {
+                spdlog::debug("Tile update for {}, {} ({} bytes) not applied", x, y, pkt->extra.size());
+            }
         })
     );
 }
@@ -163,8 +163,10 @@ void WorldHandler::setup_tile_change_request_handler()
         dispatcher_,
         tile_change_request_type,
         dispatcher_.append_listener(tile_change_request_type, [](const event::Event& event) {
+            // Only what the server confirms: a punch from the game may miss or
+            // be refused (locked world).
             const auto evt{ dynamic_cast<const event::TypedPacketEvent<packet::PacketId::TileChangeRequest>*>(&event) };
-            if (!evt) {
+            if (!evt || evt->direction != event::Direction::ClientBound) {
                 return;
             }
 
@@ -173,22 +175,68 @@ void WorldHandler::setup_tile_change_request_handler()
                 return;
             }
 
-            auto& world{ world::World::instance() };
-            auto& tile_map{ world.get_tile_map() };const std::uint32_t index{ static_cast<std::uint32_t>(pkt->int_x + pkt->int_y * tile_map.get_size().x) };
-            if (index >= tile_map.get_tiles().size()) {
+            world::World::instance().change_tile(pkt->int_x, pkt->int_y, pkt->item_id);
+        })
+    );
+}
+
+void WorldHandler::setup_state_handler()
+{
+    constexpr auto state_type{ event::packet_event_type(packet::PacketId::State) };
+    handles_.emplace_back(
+        dispatcher_,
+        state_type,
+        dispatcher_.append_listener(state_type, [](const event::Event& event) {
+            const auto evt{ dynamic_cast<const event::TypedPacketEvent<packet::PacketId::State>*>(&event) };
+            const auto pkt{ evt ? evt->get<packet::game::State>() : nullptr };
+            if (!pkt) {
                 return;
             }
 
-            if (pkt->item_id == 18) {
-                if (auto& tile{ tile_map.get_tiles()[index] }; tile.foreground != 0) {
-                    tile.foreground = 0;
-                }
-                else {
-                    tile.background = 0;
-                }
+            const glm::vec2 position{ pkt->game_packet.pos_x, pkt->game_packet.pos_y };
+            if (!std::isfinite(position.x) || !std::isfinite(position.y)) {
+                return;
             }
 
-            // TODO: Block placement requires ItemDatabase
+            // From the game: you moved. From the server: someone else did.
+            const auto& world{ world::World::instance() };
+            const auto player{
+                evt->direction == event::Direction::ServerBound
+                    ? world.get_local_player().lock()
+                    : world.get_player(static_cast<int32_t>(pkt->game_packet.net_id)).lock()
+            };
+            if (player) {
+                player->set_position(position);
+            }
+        })
+    );
+}
+
+void WorldHandler::setup_on_set_pos_handler()
+{
+    constexpr auto on_set_pos_type{ event::packet_event_type(packet::PacketId::OnSetPos) };
+    handles_.emplace_back(
+        dispatcher_,
+        on_set_pos_type,
+        dispatcher_.append_listener(on_set_pos_type, [](const event::Event& event) {
+            const auto evt{ dynamic_cast<const event::TypedPacketEvent<packet::PacketId::OnSetPos>*>(&event) };
+            if (!evt || evt->direction != event::Direction::ClientBound) {
+                return;
+            }
+
+            const auto pkt{ evt->get<packet::game::OnSetPos>() };
+            if (!pkt || !std::isfinite(pkt->position.x) || !std::isfinite(pkt->position.y)) {
+                return;
+            }
+
+            const auto& world{ world::World::instance() };
+            auto player{ world.get_player(pkt->net_id).lock() };
+            if (!player) {
+                player = world.get_local_player().lock();
+            }
+            if (player) {
+                player->set_position(pkt->position);
+            }
         })
     );
 }

@@ -119,4 +119,39 @@ struct State : GamePacket<PacketId::State, PACKET_STATE> {
         return game_payload;
     }
 };
+
+// Puts an avatar at a position (world pixels, 32 per tile). The server sends
+// it when you enter a world, respawn or go through a door; game_packet.net_id
+// is the avatar it is for.
+struct OnSetPos : VariantPacket<PacketId::OnSetPos> {
+    std::int32_t net_id{ -1 };
+    glm::vec2 position{ 0.0f, 0.0f };
+
+    bool read(const Payload& payload) override
+    {
+        const auto var{ get_payload_if<VariantPayload>(payload) };
+        if (!var) {
+            return false;
+        }
+
+        variant = var->variant;
+        game_packet = var->game_packet;
+
+        if (variant.size() < 2 || !std::holds_alternative<glm::vec2>(variant.get_variants()[1])) {
+            return false;
+        }
+
+        net_id = static_cast<std::int32_t>(game_packet.net_id);
+        position = variant.get<glm::vec2>(1);
+        return true;
+    }
+
+    Payload write() override
+    {
+        GameUpdatePacket header{ game_packet };
+        header.type = PACKET_CALL_FUNCTION;
+        header.net_id = static_cast<std::uint32_t>(net_id);
+        return VariantPayload{ header, PacketVariant{ std::string{ "OnSetPos" }, position } };
+    }
+};
 }

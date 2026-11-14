@@ -53,6 +53,7 @@ inline bool register_all_packets()
     registry.register_packet<game::OnNameChanged>();
     registry.register_packet<game::OnDialogRequest>();
     registry.register_packet<game::OnRequestWorldSelectMenu>();
+    registry.register_packet<game::OnSetPos>();
 
     event_registry::register_packet_events();
     return true;
