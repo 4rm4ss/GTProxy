@@ -7,6 +7,7 @@
 
 #include "../command.hpp"
 #include "../command_registry.hpp"
+#include "../menu.hpp"
 #include "../../core/features.hpp"
 #include "../../core/handlers/feature_handler.hpp"
 #include "../../item/item_database.hpp"
@@ -333,76 +334,24 @@ public:
     }
 };
 
-// /proxy: menu with the proxy's features (a game dialog only you see).
+// /proxy: the menu (game dialogs only you see).
 class ProxyMenuCommand final : public FeatureCommand {
 public:
-    static constexpr std::string_view DIALOG_NAME{ "gtproxy_menu" };
-
-    using FeatureCommand::FeatureCommand;
+    ProxyMenuCommand(core::handlers::FeatureHandler& features, Menu& menu)
+        : FeatureCommand{ features }
+        , menu_{ menu }
+    { }
 
     [[nodiscard]] std::string_view name() const override { return "proxy"; }
     [[nodiscard]] std::string description() const override { return "Open the proxy menu"; }
 
-    Result execute(const Context& ctx) override
+    Result execute(const Context&) override
     {
-        features_.show_dialog(build(features_, ctx.registry));
+        menu_.show(Menu::Page::Main);
         return Result::Success;
     }
 
-    [[nodiscard]] static std::string build(const core::handlers::FeatureHandler& features, const CommandRegistry& registry)
-    {
-        using core::features::sanitize;
-
-        std::string status;
-        if (features.in_world()) {
-            status = fmt::format("World: `w{}``", sanitize(features.current_world()));
-            if (const auto pos{ features.local_position() }) {
-                status += fmt::format("  Position: `w{}, {}``", static_cast<int>(pos->x / 32.0f), static_cast<int>(pos->y / 32.0f));
-            }
-        } else {
-            status = "Not in a world";
-        }
-
-        std::string d;
-        d += "set_default_color|`o\n";
-        d += "add_label_with_icon|big|`wGTProxy``|left|32|\n";
-        d += fmt::format("add_smalltext|{}|\n", status);
-        d += "add_spacer|small|\n";
-
-        d += "add_textbox|`wWorlds``|left|\n";
-        d += "add_text_input|world|World (WORLD or WORLD DOOR):||30|\n";
-        d += "add_button|warp|Warp|noflags|0|0|\n";
-        if (!features.previous_world().empty()) {
-            d += fmt::format("add_button|back|Back to {}|noflags|0|0|\n", sanitize(features.previous_world()));
-        }
-        if (features.in_world()) {
-            d += "add_button|rejoin|Rejoin this world|noflags|0|0|\n";
-        }
-        d += "add_spacer|small|\n";
-
-        d += "add_textbox|`wLooks (only you see these)``|left|\n";
-        d += fmt::format("add_text_input|nick|Nick:|{}|64|\n", sanitize(features.nick()));
-        d += "add_button|set_nick|Set nick|noflags|0|0|\n";
-        if (!features.nick().empty()) {
-            d += "add_button|reset_nick|Reset nick|noflags|0|0|\n";
-        }
-        d += fmt::format("add_checkbox|show_netid|Show netIDs next to names|{}|\n", features.show_net_ids() ? 1 : 0);
-        if (registry.get("rainbow")) {
-            d += "add_button|rainbow|Rainbow skin on/off|noflags|0|0|\n";
-        }
-        d += "add_spacer|small|\n";
-
-        d += "add_textbox|`wInfo``|left|\n";
-        if (features.in_world()) {
-            d += "add_button|players|Players in this world|noflags|0|0|\n";
-            d += "add_button|world_info|World info|noflags|0|0|\n";
-        }
-        d += "add_text_input|find|Find item:||30|\n";
-        d += "add_button|find_item|Search items|noflags|0|0|\n";
-        d += "add_button|commands|All proxy commands|noflags|0|0|\n";
-        d += "add_quick_exit|\n";
-        d += fmt::format("end_dialog|{}|Close|Apply|\n", DIALOG_NAME);
-        return d;
-    }
+private:
+    Menu& menu_;
 };
 }

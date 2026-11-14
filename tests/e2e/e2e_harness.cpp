@@ -5,6 +5,7 @@
 // Usage: GTProxy_e2e <items.dat path> [mismatch]
 //   mismatch: the logon packet carries a different items.dat hash, so the proxy
 //             must ask the client to download items.dat (hash 0).
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -395,6 +396,175 @@ void input(Endpoint& client, const std::string& text)
     send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + text));
 }
 
+
+Bytes inventory_packet(const std::vector<std::array<int, 3>>& items)
+{
+    utils::ByteStream<> bs{};
+    bs.write<std::uint8_t>(1);
+    bs.write<std::uint32_t>(96);
+    bs.write<std::uint16_t>(static_cast<std::uint16_t>(items.size()));
+    for (const auto& [id, count, flags] : items) {
+        bs.write<std::uint16_t>(static_cast<std::uint16_t>(id));
+        bs.write<std::uint8_t>(static_cast<std::uint8_t>(count));
+        bs.write<std::uint8_t>(static_cast<std::uint8_t>(flags));
+    }
+
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_SEND_INVENTORY_STATE;
+    header.net_id = static_cast<std::uint32_t>(-1);
+    return game_packet(header, bs.take_data());
+}
+
+Bytes drop_dialog(const int item_id, const int count)
+{
+    return variant_packet(packet::PacketVariant{
+        std::string{ "OnDialogRequest" },
+        fmt::format(
+            "set_default_color|`o\nadd_label_with_icon|big|`wDrop Item``|left|{0}|\nadd_textbox|How many to drop?|left|\n"
+            "add_text_input|count||{1}|5|\nembed_data|itemID|{0}\nend_dialog|drop_item|Cancel|OK|\n",
+            item_id, count
+        )
+    });
+}
+
+Bytes removed_from_inventory(const int item_id, const int count)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_MODIFY_ITEM_INVENTORY;
+    header.net_id = static_cast<std::uint32_t>(-1);
+    header.item_id = item_id;
+    header.pad[1] = static_cast<std::uint8_t>(count);
+    return game_packet(header, {});
+}
+
+// Plays the server for one drop: expects the request, opens the dialog,
+// expects the answer, confirms. Returns the answered amount.
+std::optional<int> serve_drop(Endpoint& client, Endpoint& game_server, const int item_id, const int owned)
+{
+    const auto request{ receive_text(game_server) };
+    if (request != fmt::format("action|drop\n|itemID|{}\n", item_id)) {
+        fmt::print("    expected a drop of {}, got: {}\n", item_id, request.value_or("nothing"));
+        return std::nullopt;
+    }
+
+    send(game_server, drop_dialog(item_id, owned));
+    const auto answer{ receive_text(game_server) };
+    const std::string prefix{ fmt::format("action|dialog_return\ndialog_name|drop_item\nitemID|{}|\ncount|", item_id) };
+    if (!answer || !answer->starts_with(prefix)) {
+        fmt::print("    expected the drop answer for {}, got: {}\n", item_id, answer.value_or("nothing"));
+        return std::nullopt;
+    }
+
+    const int amount{ std::stoi(answer->substr(prefix.size())) };
+    send(game_server, removed_from_inventory(item_id, amount));
+    return amount;
+}
+
+void run_item_checks(Endpoint& client, Endpoint& game_server, const std::uint16_t lock_item_id)
+{
+    // Drops need a world.
+    send(game_server, map_data_packet(build_world(lock_item_id, "ITEMWORLD")));
+    pump_for(300ms);
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    input(client, "/drop dirt");
+    {
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        pump_for(200ms);
+        check(reply && game_server.inbox.empty(), "/drop before the inventory is known does not guess");
+    }
+
+    // Dirt 200, Rock 50, World Lock 5, Diamond Lock 2, a marked item (0x02),
+    // a worn item (0x01), Fist, Wrench.
+    const Bytes inventory{ inventory_packet({
+        { 18, 1, 0 }, { 32, 1, 0 }, { 2, 200, 0 }, { 10, 50, 0 }, { 242, 5, 0 }, { 1796, 2, 0 }, { 4, 3, 0x02 }, { 48, 1, 0x01 }
+    }) };
+    send(game_server, inventory);
+    {
+        const auto got{ receive(client) };
+        check(got && same_payload(inventory, *got), "inventory packet forwarded unchanged");
+    }
+
+    // /dd: Diamond Locks first (higher value), then World Locks.
+    input(client, "/dd");
+    {
+        const auto dl{ serve_drop(client, game_server, 1796, 2) };
+        check(dl == 2, "/dd drops all Diamond Locks (answers the server's dialog with 2)");
+        const auto wl{ serve_drop(client, game_server, 242, 5) };
+        check(wl == 5, "/dd then drops all World Locks (5)");
+        const auto done{ receive_call(client, "OnConsoleMessage") };
+        bool finished{ false };
+        for (auto call{ done }; call; call = receive_call(client, "OnConsoleMessage", 1500ms)) {
+            if (call->first.get<std::string>(1).find("Drop finished") != std::string::npos) {
+                finished = true;
+                break;
+            }
+        }
+        check(finished, "/dd reports when it is done");
+        check(receive_call(client, "OnDialogRequest", 300ms) == std::nullopt, "the drop dialogs answered by the proxy never pop up in the game");
+    }
+
+    // /dw 3 drops only 3 of 5 World Locks.
+    send(game_server, inventory);
+    std::ignore = receive(client);
+    input(client, "/dw 3");
+    check(serve_drop(client, game_server, 242, 5) == 3, "/dw 3 answers the dialog with 3");
+    pump_for(300ms);
+    client.inbox.clear();
+
+    // /dropall now: everything except favourites/worn/fist/wrench; biggest first.
+    send(game_server, inventory);
+    std::ignore = receive(client);
+    input(client, "/dropall");
+    {
+        const auto call{ receive_call(client, "OnDialogRequest") };
+        const std::string confirm{ call ? call->first.get<std::string>(1) : "" };
+        check(confirm.find("end_dialog|gtproxy_dropall|") != std::string::npos && confirm.find("add_button|dropall_go|") != std::string::npos, "/dropall asks first and lists what it drops");
+        pump_for(200ms);
+        check(game_server.inbox.empty(), "/dropall drops nothing before you confirm");
+    }
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|dialog_return\ndialog_name|gtproxy_dropall\nbuttonClicked|dropall_go\n"));
+    {
+        std::vector<int> dropped;
+        for (const auto& [id, owned] : std::vector<std::pair<int, int>>{ { 2, 200 }, { 10, 50 }, { 242, 5 }, { 1796, 2 } }) {
+            if (serve_drop(client, game_server, id, owned) == owned) {
+                dropped.push_back(id);
+            }
+        }
+        check(dropped == std::vector<int>{ 2, 10, 242, 1796 }, fmt::format("confirmed /dropall drops Dirt, Rock, WL, DL in order ({})", fmt::join(dropped, ",")));
+        pump_for(800ms);
+        bool extra{ false };
+        while (const auto text{ game_server.inbox.empty() ? std::nullopt : parse_text(game_server.inbox.front()) }) {
+            extra = extra || text->starts_with("action|drop");
+            game_server.inbox.pop_front();
+        }
+        check(!extra, "favourite (flagged), worn, Fist and Wrench are kept");
+    }
+    client.inbox.clear();
+
+    // Fast drop: your own drop dialog is answered with the whole stack.
+    input(client, "/fastdrop");
+    std::ignore = receive_call(client, "OnConsoleMessage");
+    send(game_server, drop_dialog(2, 200));
+    {
+        const auto answer{ receive_text(game_server) };
+        check(answer == "action|dialog_return\ndialog_name|drop_item\nitemID|2|\ncount|200\n", "fast drop answers the drop dialog with the whole stack");
+        check(receive_call(client, "OnDialogRequest", 300ms) == std::nullopt, "fast drop: the dialog does not pop up");
+    }
+    input(client, "/fastdrop");
+    std::ignore = receive_call(client, "OnConsoleMessage");
+    {
+        const Bytes dialog{ drop_dialog(2, 200) };
+        send(game_server, dialog);
+        const auto got{ receive(client) };
+        check(got && same_payload(dialog, *got), "with fast drop off the drop dialog reaches the game unchanged");
+    }
+
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
 void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint16_t lock_item_id)
 {
     client.inbox.clear();
@@ -492,9 +662,27 @@ void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint
         const auto call{ receive_call(client, "OnDialogRequest") };
         const std::string dialog{ call ? call->first.get<std::string>(1) : "" };
         check(dialog.find("end_dialog|gtproxy_menu|") != std::string::npos, "/proxy opens the GTProxy menu");
-        check(dialog.find("add_text_input|world|") != std::string::npos && dialog.find("add_button|warp|") != std::string::npos, "menu has warp input and button");
         check(dialog.find("World: `wE2ETESTWORLD``") != std::string::npos, "menu shows the current world");
-        check(dialog.find("add_button|rainbow|") != std::string::npos, "menu offers the Lua rainbow command");
+        check(
+            dialog.find("add_button|page_worlds|") != std::string::npos && dialog.find("add_button|page_items|") != std::string::npos
+                && dialog.find("add_button|page_looks|") != std::string::npos && dialog.find("add_button|page_info|") != std::string::npos,
+            "menu has the Worlds / Items / Looks / Info pages"
+        );
+    }
+    const auto open_page = [&](const std::string& button) {
+        send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|dialog_return\ndialog_name|gtproxy_menu\nbuttonClicked|" + button + "\n"));
+        const auto call{ receive_call(client, "OnDialogRequest") };
+        return call ? call->first.get<std::string>(1) : std::string{};
+    };
+    {
+        const std::string worlds{ open_page("page_worlds") };
+        check(worlds.find("end_dialog|gtproxy_worlds|") != std::string::npos && worlds.find("add_text_input|world|") != std::string::npos && worlds.find("add_button|warp|") != std::string::npos, "Worlds page has the warp input and button");
+        const std::string looks{ open_page("page_looks") };
+        check(looks.find("add_button|rainbow|") != std::string::npos && looks.find("add_checkbox|show_netid|") != std::string::npos, "Looks page offers rainbow (Lua) and netIDs");
+        const std::string items{ open_page("page_items") };
+        check(items.find("add_checkbox|fast_drop|") != std::string::npos && items.find("add_button|dropall|") != std::string::npos, "Items page has drop tools");
+        pump_for(200ms);
+        check(game_server.inbox.empty(), "menu pages are not sent to the game server");
     }
 
     send(client, text_packet(
@@ -759,6 +947,9 @@ int main(const int argc, char** argv)
 
     // 8b. Proxy features: nick, netIDs, the /proxy menu, warp and back.
     run_feature_checks(client, game_server, lock_item_id);
+
+    // 8c. Item tools: /dd, /dw, /dropall, fast drop.
+    run_item_checks(client, game_server, lock_item_id);
 
     // 9. Garbage / truncated / hostile world data must not crash the proxy.
     {

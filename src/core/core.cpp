@@ -43,7 +43,8 @@ Core::Core()
     forwarding_handler_ = std::make_unique<handlers::ForwardingHandler>(dispatcher_, *client_, *server_);
     world_handler_ = std::make_unique<handlers::WorldHandler>(dispatcher_);
     feature_handler_ = std::make_unique<handlers::FeatureHandler>(dispatcher_, *server_, *client_);
-    command_handler_ = std::make_unique<command::CommandHandler>(config_, dispatcher_, scheduler_, *server_, *client_, *feature_handler_);
+    inventory_handler_ = std::make_unique<handlers::InventoryHandler>(dispatcher_, *feature_handler_, "gtproxy-settings.txt");
+    command_handler_ = std::make_unique<command::CommandHandler>(config_, dispatcher_, scheduler_, *server_, *client_, *feature_handler_, *inventory_handler_);
 
     script_engine_ = std::make_unique<scripting::LuaEngine>();
 
@@ -88,6 +89,7 @@ Core::~Core()
     script_scheduler_.reset();
     command_handler_.reset();
     script_engine_.reset();
+    inventory_handler_.reset();
     feature_handler_.reset();
 
     world_handler_.reset();
@@ -117,6 +119,7 @@ void Core::run() const
         client_->process();
         client_->check_connect_progress();
         feature_handler_->update();
+        inventory_handler_->update();
         script_scheduler_->update(elapsed);
 
         if (sleep_duration > std::chrono::microseconds::zero()) {

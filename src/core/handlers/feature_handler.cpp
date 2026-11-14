@@ -1,5 +1,6 @@
 #include "feature_handler.hpp"
 
+#include <cstring>
 #include <tuple>
 
 #include <fmt/format.h>
@@ -129,6 +130,21 @@ void FeatureHandler::show_dialog(const std::string& markup) const
     packet::game::OnDialogRequest dialog{};
     dialog.dialog = markup;
     send_to_client(dialog.write());
+}
+
+bool FeatureHandler::send_text_to_server(const std::string& text) const
+{
+    if (!client_.is_connected()) {
+        return false;
+    }
+
+    std::vector<std::byte> data(sizeof(std::uint32_t));
+    const std::uint32_t type{ packet::NET_MESSAGE_GENERIC_TEXT };
+    std::memcpy(data.data(), &type, sizeof(type));
+    const auto* begin{ reinterpret_cast<const std::byte*>(text.data()) };
+    data.insert(data.end(), begin, begin + text.size());
+    data.push_back(std::byte{ 0 });
+    return client_.write(data);
 }
 
 void FeatureHandler::update()
@@ -303,6 +319,11 @@ void FeatureHandler::on_map_data(const event::Event& event)
             previous_world_ = current_world_;
         }
         current_world_ = name;
+        std::erase(recent_worlds_, name);
+        recent_worlds_.push_front(name);
+        if (recent_worlds_.size() > 10) {
+            recent_worlds_.pop_back();
+        }
     }
 }
 

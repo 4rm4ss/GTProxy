@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -49,6 +50,13 @@ public:
     void message(const std::string& text) const;
     // Opens a dialog (OnDialogRequest markup) in the game.
     void show_dialog(const std::string& markup) const;
+    // Sends a text packet to the game server as the game would
+    // (NET_MESSAGE_GENERIC_TEXT, e.g. "action|drop\n|itemID|2\n").
+    bool send_text_to_server(const std::string& text) const;
+
+    // Worlds entered this session, newest first (at most 10).
+    [[nodiscard]] const std::deque<std::string>& recent_worlds() const { return recent_worlds_; }
+    [[nodiscard]] std::int32_t local_net_id() const { return local_net_id_; }
 
     // Called from the main loop.
     void update();
@@ -89,6 +97,7 @@ private:
     std::string current_world_;
     std::string previous_world_;
     std::string last_join_;
+    std::deque<std::string> recent_worlds_;
     std::optional<glm::vec2> local_position_;
 
     std::string pending_warp_;

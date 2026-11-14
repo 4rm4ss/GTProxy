@@ -10,6 +10,7 @@
 #include "commands/exit_command.hpp"
 #include "commands/feature_commands.hpp"
 #include "commands/help_command.hpp"
+#include "commands/item_commands.hpp"
 #include "commands/skin_command.hpp"
 
 namespace command {
@@ -24,7 +25,8 @@ CommandHandler::CommandHandler(
     std::shared_ptr<core::Scheduler> scheduler,
     network::Server& server,
     network::Client& client,
-    core::handlers::FeatureHandler& features
+    core::handlers::FeatureHandler& features,
+    core::handlers::InventoryHandler& inventory
 )
     : config_{ config }
     , dispatcher_{ dispatcher }
@@ -32,6 +34,8 @@ CommandHandler::CommandHandler(
     , server_{ server }
     , client_{ client }
     , features_{ features }
+    , inventory_{ inventory }
+    , menu_{ features, inventory, registry_, [this](const std::string& line) { return run(line); } }
 {
     registry_.set_prefix(config_.get_command_config().prefix);
     register_default_commands();
@@ -57,7 +61,7 @@ CommandHandler::~CommandHandler()
 
 void CommandHandler::register_default_commands()
 {
-    registry_.add(std::make_unique<ProxyMenuCommand>(features_));
+    registry_.add(std::make_unique<ProxyMenuCommand>(features_, menu_));
     registry_.add(std::make_unique<WarpCommand>(features_));
     registry_.add(std::make_unique<BackCommand>(features_));
     registry_.add(std::make_unique<RejoinCommand>(features_));
@@ -70,6 +74,17 @@ void CommandHandler::register_default_commands()
     registry_.add(std::make_unique<FindItemCommand>(features_));
     registry_.add(std::make_unique<ItemInfoCommand>(features_));
     registry_.add(std::make_unique<SkinCommand>());
+    registry_.add(std::make_unique<InventoryCommand>(features_, inventory_, menu_));
+    registry_.add(std::make_unique<DropAllCommand>(features_, inventory_, menu_));
+    registry_.add(std::make_unique<DropLocksCommand>(features_, inventory_));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "dw", "World Lock"));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "ddl", "Diamond Lock"));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "db", "Blue Gem Lock"));
+    registry_.add(std::make_unique<DropItemCommand>(features_, inventory_));
+    registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastDrop));
+    registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastTrash));
+    registry_.add(std::make_unique<KeepCommand>(features_, inventory_));
+    registry_.add(std::make_unique<BalanceCommand>(features_, inventory_));
     registry_.add(std::make_unique<HelpCommand>());
     registry_.add(std::make_unique<DebugCommand>());
 }
@@ -110,48 +125,11 @@ void CommandHandler::on_dialog_return(const event::Event& e)
     }
 
     const auto dialog{ evt->get<packet::message::DialogReturn>() };
-    if (!dialog || dialog->dialog_name != ProxyMenuCommand::DIALOG_NAME) {
+    if (!dialog || !Menu::owns(dialog->dialog_name)) {
         return;
     }
 
     evt->cancel();
-
-    if (const bool show{ dialog->checked("show_netid") }; show != features_.show_net_ids()) {
-        features_.set_show_net_ids(show);
-    }
-
-    const std::string& button{ dialog->button_clicked };
-    spdlog::info("Proxy menu: {}", button.empty() ? "apply" : button);
-
-    const auto with_text = [&](const std::string& command, const std::string& field, const std::string& missing) {
-        const std::string value{ core::features::sanitize(dialog->field(field)) };
-        if (value.find_first_not_of(' ') == std::string::npos) {
-            features_.message(missing);
-            return;
-        }
-        run(command + " " + value);
-    };
-
-    if (button == "warp") {
-        with_text("warp", "world", "`4Oops: ``Type a world name first.");
-    } else if (button == "back") {
-        run("back");
-    } else if (button == "rejoin") {
-        run("rejoin");
-    } else if (button == "set_nick") {
-        with_text("nick", "nick", "`4Oops: ``Type a nick first.");
-    } else if (button == "reset_nick") {
-        run("nick");
-    } else if (button == "rainbow") {
-        run("rainbow");
-    } else if (button == "players") {
-        run("players");
-    } else if (button == "world_info") {
-        run("world");
-    } else if (button == "find_item") {
-        with_text("find", "find", "`4Oops: ``Type part of an item name first.");
-    } else if (button == "commands") {
-        run("proxyhelp");
-    }
+    menu_.handle(*dialog);
 }
 }

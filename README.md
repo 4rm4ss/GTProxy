@@ -97,7 +97,7 @@ server). `/proxyhelp` lists everything, including commands added by Lua scripts.
 
 | Command | What it does |
 |---------|--------------|
-| `/proxy` | Menu with the features below (warp, nick, netIDs, info, item search) |
+| `/proxy` | Menu with pages for worlds, items, looks and info |
 | `/warp <world> [door]` | Exit and join a world (or a door in it), like typing the name in the world menu |
 | `/back` | Return to the previous world |
 | `/rejoin` | Exit and enter the current world again |
@@ -108,6 +108,18 @@ server). `/proxyhelp` lists everything, including commands added by Lua scripts.
 | `/world` | World name, size, players, dropped items |
 | `/find <text>` / `/item <id>` | Search items.dat by name / show an item |
 | `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen (rainbow is a Lua script) |
+| `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) |
+| `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) |
+| `/dd` | Drop all locks (World, Diamond, Blue Gem, Black Gem) |
+| `/dw`, `/ddl`, `/db [amount]` | Drop World / Diamond / Blue Gem Locks |
+| `/drop <id or name> [amount]` | Drop one item |
+| `/fastdrop`, `/fasttrash` | Skip the "how many?" window when you drop / trash (fast trash never applies to locks) |
+| `/keep [add\|del] <item>` | Items `/dropall` never drops |
+| `/balance` | Your locks in World Locks |
+
+Drops are the same request and "how many?" answer the game sends when you
+press Drop, one stack at a time, each waiting for the server's reply (with a
+pause of 200 ms by default). Item settings are saved in `gtproxy-settings.txt`.
 
 ## License
 

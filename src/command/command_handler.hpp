@@ -2,6 +2,8 @@
 #include "command_registry.hpp"
 #include "../core/config.hpp"
 #include "../core/handlers/feature_handler.hpp"
+#include "../core/handlers/inventory_handler.hpp"
+#include "menu.hpp"
 #include "../core/scheduler.hpp"
 #include "../event/event.hpp"
 #include "../network/client.hpp"
@@ -16,7 +18,8 @@ public:
         std::shared_ptr<core::Scheduler> scheduler,
         network::Server& server,
         network::Client& client,
-        core::handlers::FeatureHandler& features
+        core::handlers::FeatureHandler& features,
+        core::handlers::InventoryHandler& inventory
     );
     ~CommandHandler();
 
@@ -37,6 +40,8 @@ private:
     network::Server& server_;
     network::Client& client_;
     core::handlers::FeatureHandler& features_;
+    core::handlers::InventoryHandler& inventory_;
+    Menu menu_;
 
     CommandRegistry registry_;
     event::Dispatcher::Handle listener_handle_;

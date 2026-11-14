@@ -28,12 +28,14 @@ add_executable(GTProxy_tests
     core/test_certificate.cpp
     core/test_session_log.cpp
     core/test_features.cpp
+    core/test_inventory.cpp
     network/test_enet_packet.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
     ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp
     ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp
-    ${CMAKE_SOURCE_DIR}/src/core/features.cpp)
+    ${CMAKE_SOURCE_DIR}/src/core/features.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/inventory.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
