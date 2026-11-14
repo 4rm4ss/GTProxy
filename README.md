@@ -93,7 +93,8 @@ Remove the hosts entries to play without the proxy.
 ### In-game commands
 
 Type them in the game chat; the proxy answers them itself (they never reach the
-server). `/proxyhelp` lists everything, including commands added by Lua scripts.
+server). `/proxyhelp` (or All commands in `/proxy`) opens a window with every
+command, including those added by Lua scripts.
 
 | Command | What it does |
 |---------|--------------|
@@ -110,7 +111,8 @@ server). `/proxyhelp` lists everything, including commands added by Lua scripts.
 | `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen (rainbow is a Lua script) |
 | `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) |
 | `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) |
-| `/dd` | Drop all locks (World, Diamond, Blue Gem, Black Gem) |
+| `/daw` | Drop all locks (World, Diamond, Blue Gem, Black Gem) |
+| `/dd <WL>` | Drop locks worth that many World Locks, big ones first (`/dd 300` = 3 Diamond Locks); `/dd` alone = all locks |
 | `/dw`, `/ddl`, `/db [amount]` | Drop World / Diamond / Blue Gem Locks |
 | `/drop <id or name> [amount]` | Drop one item |
 | `/fastdrop`, `/fasttrash` | Skip the "how many?" window when you drop / trash (fast trash never applies to locks) |

@@ -486,13 +486,13 @@ void run_item_checks(Endpoint& client, Endpoint& game_server, const std::uint16_
         check(got && same_payload(inventory, *got), "inventory packet forwarded unchanged");
     }
 
-    // /dd: Diamond Locks first (higher value), then World Locks.
-    input(client, "/dd");
+    // /daw: all locks, Diamond Locks first (higher value), then World Locks.
+    input(client, "/daw");
     {
         const auto dl{ serve_drop(client, game_server, 1796, 2) };
-        check(dl == 2, "/dd drops all Diamond Locks (answers the server's dialog with 2)");
+        check(dl == 2, "/daw drops all Diamond Locks (answers the server's dialog with 2)");
         const auto wl{ serve_drop(client, game_server, 242, 5) };
-        check(wl == 5, "/dd then drops all World Locks (5)");
+        check(wl == 5, "/daw then drops all World Locks (5)");
         const auto done{ receive_call(client, "OnConsoleMessage") };
         bool finished{ false };
         for (auto call{ done }; call; call = receive_call(client, "OnConsoleMessage", 1500ms)) {
@@ -501,7 +501,7 @@ void run_item_checks(Endpoint& client, Endpoint& game_server, const std::uint16_
                 break;
             }
         }
-        check(finished, "/dd reports when it is done");
+        check(finished, "/daw reports when it is done");
         check(receive_call(client, "OnDialogRequest", 300ms) == std::nullopt, "the drop dialogs answered by the proxy never pop up in the game");
     }
 
@@ -512,6 +512,34 @@ void run_item_checks(Endpoint& client, Endpoint& game_server, const std::uint16_
     check(serve_drop(client, game_server, 242, 5) == 3, "/dw 3 answers the dialog with 3");
     pump_for(300ms);
     client.inbox.clear();
+
+    // /dd <WL>: 300 WL from 5 DL + 5 WL = 3 Diamond Locks; 250 cannot be paid.
+    {
+        const Bytes locks{ inventory_packet({ { 18, 1, 0 }, { 242, 5, 0 }, { 1796, 5, 0 } }) };
+        send(game_server, locks);
+        std::ignore = receive(client);
+        input(client, "/dd 300");
+        check(serve_drop(client, game_server, 1796, 5) == 3, "/dd 300 drops 3 Diamond Locks");
+        pump_for(500ms);
+        bool more{ false };
+        for (const auto& packet : game_server.inbox) {
+            more = more || parse_text(packet).value_or("").starts_with("action|drop");
+        }
+        check(!more, "/dd 300 drops nothing else");
+        client.inbox.clear();
+        game_server.inbox.clear();
+
+        send(game_server, locks);
+        std::ignore = receive(client);
+        input(client, "/dd 250");
+        const auto reply{ receive_call(client, "OnConsoleMessage") };
+        pump_for(300ms);
+        check(
+            reply && reply->first.get<std::string>(1).find("Can't make exactly") != std::string::npos && game_server.inbox.empty(),
+            "/dd 250 with 5 DL + 5 WL explains it cannot pay exactly and drops nothing"
+        );
+        client.inbox.clear();
+    }
 
     // A single World Lock: the server may drop it without the "how many?"
     // dialog; /dd must still count it as dropped (not as refused).
@@ -931,9 +959,11 @@ int main(const int argc, char** argv)
         pump_for(300ms);
         check(reply.has_value(), fmt::format("proxy answers {} itself", command));
         const auto reply_call{ reply ? parse_variant(*reply) : std::nullopt };
+        const bool is_help{ command == "/proxyhelp" };
         check(
-            reply_call && reply_call->get<std::string>(0) == "OnConsoleMessage",
-            fmt::format("{} reply is an OnConsoleMessage the game prints", command)
+            reply_call && reply_call->get<std::string>(0) == (is_help ? "OnDialogRequest" : "OnConsoleMessage")
+                && (!is_help || reply_call->get<std::string>(1).find("end_dialog|gtproxy_commands|") != std::string::npos),
+            fmt::format("{} reply is {}", command, is_help ? "the command list window" : "an OnConsoleMessage the game prints")
         );
         check(game_server.inbox.empty(), fmt::format("{} is not leaked to the game server", command));
         client.inbox.clear();

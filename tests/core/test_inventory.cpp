@@ -88,6 +88,11 @@ TEST(InventoryTest, OtherDialogsAreNotItemDialogs)
     EXPECT_FALSE(parse_item_dialog("add_button|x|X|noflags|0|0|\nend_dialog|popup|Close||\n"));
     EXPECT_FALSE(parse_item_dialog("end_dialog|drop_item|Cancel|OK|\n")); // no item id
     EXPECT_FALSE(parse_item_dialog(""));
+
+    // Another dialog about an item is read, with its own name.
+    const auto info{ parse_item_dialog("embed_data|itemID|242\nend_dialog|item_info|Close||\n") };
+    ASSERT_TRUE(info);
+    EXPECT_EQ(info->dialog_name, "item_info");
 }
 
 TEST(InventoryTest, RequestsAndReplies)
@@ -95,6 +100,29 @@ TEST(InventoryTest, RequestsAndReplies)
     EXPECT_EQ(drop_request(242), "action|drop\n|itemID|242\n");
     EXPECT_EQ(trash_request(2), "action|trash\n|itemID|2\n");
     EXPECT_EQ(item_dialog_reply("drop_item", 242, 5), "action|dialog_return\ndialog_name|drop_item\nitemID|242|\ncount|5\n");
+}
+
+TEST(InventoryTest, PickLocksBiggestFirst)
+{
+    const std::vector<LockStack> have{ { 242, 1, 150 }, { 1796, 100, 5 }, { 7188, 10'000, 1 } };
+
+    const auto three_dl{ pick_locks(have, 300) };
+    ASSERT_TRUE(three_dl);
+    EXPECT_EQ(*three_dl, (std::vector<std::pair<std::uint16_t, std::uint32_t>>{ { 1796, 3 } }));
+
+    const auto mixed{ pick_locks(have, 10'250) };
+    ASSERT_TRUE(mixed);
+    EXPECT_EQ(*mixed, (std::vector<std::pair<std::uint16_t, std::uint32_t>>{ { 7188, 1 }, { 1796, 2 }, { 242, 50 } }));
+
+    // Not enough DLs: the rest is paid in WLs.
+    const auto more_wl{ pick_locks(have, 640) };
+    ASSERT_TRUE(more_wl);
+    EXPECT_EQ(*more_wl, (std::vector<std::pair<std::uint16_t, std::uint32_t>>{ { 1796, 5 }, { 242, 140 } }));
+
+    EXPECT_EQ(pick_locks(have, 3), (std::vector<std::pair<std::uint16_t, std::uint32_t>>{ { 242, 3 } }));
+    EXPECT_FALSE(pick_locks({ { 1796, 100, 5 } }, 250));            // no WLs for the 50
+    EXPECT_FALSE(pick_locks(have, 20'000));                          // only one BGL
+    EXPECT_FALSE(pick_locks({}, 1));
 }
 
 TEST(InventoryTest, LockValues)

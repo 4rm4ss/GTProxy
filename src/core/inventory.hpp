@@ -27,8 +27,9 @@ struct Inventory {
 // u8 ?, u32 slots, u16 count, count x (u16 id, u8 amount, u8 flags).
 [[nodiscard]] std::optional<Inventory> parse(std::span<const std::byte> data);
 
-// A drop_item / trash_item dialog the server opens after "action|drop" /
-// "action|trash".
+// A dialog about one item (it embeds itemID), e.g. the drop_item /
+// trash_item dialog the server opens after "action|drop" / "action|trash".
+// dialog_name tells which one it is.
 struct ItemDialog {
     std::string dialog_name;    // "drop_item" or "trash_item"
     std::uint16_t item_id{ 0 };
@@ -54,6 +55,15 @@ inline constexpr std::uint16_t BLUE_GEM_LOCK{ 7188 };
 // Known IDs work even when items.dat could not be read; newer locks (Black
 // Gem Lock) are recognised by name.
 [[nodiscard]] std::uint64_t lock_value(std::uint16_t item_id, std::string_view item_name = {});
+
+// Locks worth exactly `amount` World Locks from what you have, biggest
+// first (300 -> 3 Diamond Locks). nullopt when it cannot be paid exactly.
+struct LockStack {
+    std::uint16_t id{ 0 };
+    std::uint64_t value{ 0 };   // in World Locks
+    std::uint32_t count{ 0 };
+};
+[[nodiscard]] std::optional<std::vector<std::pair<std::uint16_t, std::uint32_t>>> pick_locks(std::vector<LockStack> have, std::uint64_t amount);
 
 // Name of the lock items above without items.dat ("" for other IDs).
 [[nodiscard]] std::string_view known_name(std::uint16_t item_id);

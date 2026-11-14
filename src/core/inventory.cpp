@@ -150,10 +150,7 @@ std::optional<ItemDialog> parse_item_dialog(const std::string_view markup)
         }
     }
 
-    if (dialog.dialog_name != "drop_item" && dialog.dialog_name != "trash_item") {
-        return std::nullopt;
-    }
-    if (!has_item) {
+    if (!has_item || dialog.dialog_name.empty()) {
         return std::nullopt;
     }
 
@@ -177,6 +174,33 @@ std::string drop_request(const std::uint16_t item_id)
 std::string trash_request(const std::uint16_t item_id)
 {
     return fmt::format("action|trash\n|itemID|{}\n", item_id);
+}
+
+std::optional<std::vector<std::pair<std::uint16_t, std::uint32_t>>> pick_locks(std::vector<LockStack> have, std::uint64_t amount)
+{
+    // Each lock is worth 100 of the next smaller one, so taking as many big
+    // locks as fit is always the best choice.
+    std::ranges::sort(have, [](const LockStack& a, const LockStack& b) { return a.value > b.value; });
+
+    std::vector<std::pair<std::uint16_t, std::uint32_t>> picked;
+    for (const auto& lock : have) {
+        if (amount == 0) {
+            break;
+        }
+        if (lock.value == 0 || lock.count == 0) {
+            continue;
+        }
+        const auto take{ static_cast<std::uint32_t>(std::min<std::uint64_t>(lock.count, amount / lock.value)) };
+        if (take > 0) {
+            picked.emplace_back(lock.id, take);
+            amount -= take * lock.value;
+        }
+    }
+
+    if (amount != 0) {
+        return std::nullopt;
+    }
+    return picked;
 }
 
 std::string_view known_name(const std::uint16_t item_id)

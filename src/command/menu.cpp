@@ -36,6 +36,7 @@ std::string dialog_name(const Menu::Page page)
     case Menu::Page::Info: return "gtproxy_info";
     case Menu::Page::Inventory: return "gtproxy_inventory";
     case Menu::Page::DropAll: return "gtproxy_dropall";
+    case Menu::Page::Commands: return "gtproxy_commands";
     }
     return "gtproxy_menu";
 }
@@ -153,6 +154,7 @@ std::string Menu::build(const Page page) const
     case Page::Info: return info_page();
     case Page::Inventory: return inventory_page();
     case Page::DropAll: return drop_all_page();
+    case Page::Commands: return commands_page();
     }
     return main_page();
 }
@@ -182,7 +184,9 @@ std::string Menu::main_page() const
         .section("Worlds", ICON_WORLDS).button("page_worlds", "Warp, back, recent worlds")
         .section("Items", ICON_ITEMS).button("page_items", "Drop all, locks, fast drop")
         .section("Looks", ICON_LOOKS).button("page_looks", "Nick, netIDs, skin")
-        .section("Info", ICON_INFO).button("page_info", "Players, world, item search");
+        .section("Info", ICON_INFO).button("page_info", "Players, world, item search")
+        .spacer()
+        .button("commands", "All proxy commands");
     return d.end(Page::Main);
 }
 
@@ -237,7 +241,9 @@ std::string Menu::items_page() const
     d.spacer()
         .button("inventory", "Show inventory")
         .button("dropall", "Drop all except favourites...")
-        .button("dd", "Drop all locks (WL, DL, BGL)")
+        .button("daw", "Drop all locks (WL, DL, BGL)")
+        .input("dd_amount", "Drop locks worth (WL, e.g. 300 = 3 DL):", "", 9)
+        .button("dd_amount_go", "Drop that amount")
         .spacer()
         .checkbox("fast_drop", "Fast drop: no \"how many?\", drop the whole stack", inventory_.fast_drop())
         .checkbox("fast_trash", "Fast trash: same for trash (never for locks)", inventory_.fast_trash())
@@ -393,6 +399,19 @@ std::string Menu::drop_all_page() const
     return d.end(Page::DropAll);
 }
 
+std::string Menu::commands_page() const
+{
+    Dialog d;
+    d.header("Commands", ICON_MENU);
+    d.small(fmt::format("`oType them in chat. They never reach the server. Prefix: `w{}``", registry_.prefix()));
+    d.spacer();
+    for (const auto& [name, description] : registry_.get_all_commands()) {
+        d.small(fmt::format("`w{}{}`` `o- {}", registry_.prefix(), sanitize(name), sanitize(description)));
+    }
+    d.spacer().button("page_main", "<< Menu");
+    return d.end(Page::Commands);
+}
+
 void Menu::handle(const packet::message::DialogReturn& dialog)
 {
     const std::string& name{ dialog.dialog_name };
@@ -438,7 +457,8 @@ void Menu::handle(const packet::message::DialogReturn& dialog)
     else if (button == "dropall") { show(Page::DropAll); }
     else if (button == "dropall_go") { run_("dropall now"); }
     else if (button == "drop_stop") { run_("dropall stop"); }
-    else if (button == "dd") { run_("dd"); }
+    else if (button == "daw") { run_("daw"); }
+    else if (button == "dd_amount_go") { with_text("dd", "dd_amount", "`4Oops: ``Type an amount in World Locks first."); }
     else if (button == "warp") { with_text("warp", "world", "`4Oops: ``Type a world name first."); }
     else if (button == "back") { run_("back"); }
     else if (button == "rejoin") { run_("rejoin"); }
@@ -459,7 +479,7 @@ void Menu::handle(const packet::message::DialogReturn& dialog)
     else if (button == "pos") { run_("pos"); }
     else if (button == "find_item") { with_text("find", "find", "`4Oops: ``Type part of an item name first."); }
     else if (button == "item_info") { with_text("item", "item_id", "`4Oops: ``Type an item ID first."); }
-    else if (button == "commands") { run_("proxyhelp"); }
+    else if (button == "commands") { show(Page::Commands); }
     else if (button.empty() && (name == dialog_name(Page::Items) || name == dialog_name(Page::Looks))) {
         features_.message("`oSettings saved.");
     }

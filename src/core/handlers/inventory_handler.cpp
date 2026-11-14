@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <charconv>
 #include <fstream>
+#include <span>
 #include <sstream>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/fmt/bin_to_hex.h>
 
 #include "../../item/item_database.hpp"
 #include "../../packet/game/dialog.hpp"
@@ -247,10 +249,20 @@ void InventoryHandler::on_inventory(const event::Event& event)
         return;
     }
 
+    // The raw start of the packet goes into the session log so the format
+    // can be checked against what the server really sends.
+    const auto head{ std::span{ pkt->extra }.first(std::min<std::size_t>(pkt->extra.size(), 48)) };
+    spdlog::info("Inventory packet: {} bytes, starts with {:n}", pkt->extra.size(), spdlog::to_hex(head.begin(), head.end()));
+
     const auto parsed{ inventory::parse(pkt->extra) };
     if (!parsed) {
         spdlog::warn("Could not read the inventory packet ({} bytes)", pkt->extra.size());
         return;
+    }
+
+    const std::size_t expected{ 7 + parsed->items.size() * 4 };
+    if (pkt->extra.size() != expected && pkt->extra.size() != expected + 1) {
+        spdlog::warn("Inventory packet is {} bytes, the known format needs {}: the layout may have changed", pkt->extra.size(), expected);
     }
 
     known_ = true;
@@ -262,6 +274,15 @@ void InventoryHandler::on_inventory(const event::Event& event)
         marked += item.flags != 0 ? 1 : 0;
     }
     spdlog::info("Inventory: {} items in {} slots ({} with flags)", items_.size(), slots_, marked);
+    std::string sample;
+    for (const auto& item : parsed->items) {
+        if (sample.size() > 400) {
+            sample += " ...";
+            break;
+        }
+        sample += fmt::format("{}{} x{}{}", sample.empty() ? "" : ", ", item_name(item.id), item.count, item.flags ? fmt::format(" [flags 0x{:02X}]", item.flags) : "");
+    }
+    spdlog::info("Inventory items: {}", sample.empty() ? "none" : sample);
 }
 
 void InventoryHandler::on_modify(const event::Event& event)
@@ -276,6 +297,7 @@ void InventoryHandler::on_modify(const event::Event& event)
     const auto id{ static_cast<std::uint16_t>(pkt->game_packet.item_id) };
     const int removed{ pkt->game_packet.pad[1] };
     const int added{ pkt->game_packet.pad[2] };
+    spdlog::debug("Inventory change: {} -{} +{} (had {})", item_name(id), removed, added, count_of(id));
 
     auto& item{ items_[id] };
     item.id = id;
@@ -332,11 +354,24 @@ void InventoryHandler::on_dialog(const event::Event& event)
     }
 
     const auto dialog{ inventory::parse_item_dialog(pkt->dialog) };
+    const bool waiting{ current_ && stage_ == Stage::WaitDialog };
     if (!dialog) {
+        if (waiting) {
+            // Shows in the log what the server sent instead of the drop dialog.
+            spdlog::info("Drop: waiting for the drop dialog of {}, got another dialog: {}", item_name(current_->item_id), pkt->dialog.substr(0, 400));
+        }
         return;
     }
 
-    const bool ours{ current_ && stage_ == Stage::WaitDialog && dialog->dialog_name == "drop_item" && dialog->item_id == current_->item_id };
+    // Our drop: the item matches and it is a drop dialog (any name with
+    // "drop" in it, in case the server renames it).
+    const bool ours{
+        waiting && dialog->item_id == current_->item_id
+        && dialog->dialog_name.find("drop") != std::string::npos
+    };
+    if (waiting && !ours) {
+        spdlog::info("Drop: waiting for the drop dialog of {}, got '{}' for item {}", item_name(current_->item_id), dialog->dialog_name, dialog->item_id);
+    }
     if (ours) {
         const std::uint32_t amount{ current_->limit > 0 ? std::min(current_->limit, dialog->count) : dialog->count };
         evt->cancel();
@@ -354,6 +389,9 @@ void InventoryHandler::on_dialog(const event::Event& event)
     // Fast drop / fast trash for what you drop or trash yourself. Never for
     // locks: those keep the normal "how many?" window.
     const bool is_lock{ inventory::lock_value(dialog->item_id, item_name(dialog->item_id)) > 0 };
+    if (dialog->dialog_name != "drop_item" && dialog->dialog_name != "trash_item") {
+        return;
+    }
     const bool fast{
         dialog->count > 0
         && ((dialog->dialog_name == "drop_item" && fast_drop_)

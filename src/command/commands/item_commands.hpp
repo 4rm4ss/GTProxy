@@ -189,12 +189,20 @@ private:
 };
 
 // /dd: every World Lock, Diamond Lock, Blue Gem Lock and Black Gem Lock.
+// /daw: every lock. /dd <amount>: locks worth that many World Locks, big
+// ones first (/dd 300 = 3 Diamond Locks); /dd alone = every lock.
 class DropLocksCommand final : public ItemCommand {
 public:
-    using ItemCommand::ItemCommand;
+    DropLocksCommand(core::handlers::FeatureHandler& f, core::handlers::InventoryHandler& i, std::string name, const bool amount)
+        : ItemCommand{ f, i }, name_{ std::move(name) }, amount_{ amount } { }
 
-    [[nodiscard]] std::string_view name() const override { return "dd"; }
-    [[nodiscard]] std::string description() const override { return "Drop all locks (World, Diamond, Blue Gem, Black Gem)"; }
+    [[nodiscard]] std::string_view name() const override { return name_; }
+    [[nodiscard]] std::string description() const override
+    {
+        return amount_
+            ? "Drop locks worth N World Locks: dd 300 = 3 Diamond Locks (dd alone = all locks)"
+            : "Drop all locks (World, Diamond, Blue Gem, Black Gem)";
+    }
 
     Result execute(const Context& ctx) override
     {
@@ -202,17 +210,53 @@ public:
             return Result::Failed;
         }
 
-        std::vector<core::handlers::InventoryHandler::Job> jobs;
-        for (const auto& [id, value] : locks()) {
-            jobs.push_back({ id, 0 });
-        }
-        if (jobs.empty()) {
-            spdlog::info("/dd: no locks among {} inventory items", inventory_.items().size());
+        const auto have{ locks() };
+        if (have.empty()) {
+            spdlog::info("/{}: no locks among {} inventory items", name_, inventory_.items().size());
             reply("`oYou have no locks.");
             return Result::Failed;
         }
+
+        std::vector<core::handlers::InventoryHandler::Job> jobs;
+        if (!amount_ || ctx.args.empty()) {
+            for (const auto& [id, value] : have) {
+                jobs.push_back({ id, 0 });
+            }
+            return start(jobs, ctx.registry.prefix()) ? Result::Success : Result::Failed;
+        }
+
+        std::uint64_t amount{};
+        if (ctx.args.size() != 1 || std::from_chars(ctx.args[0].data(), ctx.args[0].data() + ctx.args[0].size(), amount).ec != std::errc{} || amount == 0) {
+            reply(fmt::format("`4Usage: ``{}dd <World Locks> - e.g. {}dd 300 drops 3 Diamond Locks", ctx.registry.prefix(), ctx.registry.prefix()));
+            return Result::InvalidArguments;
+        }
+
+        std::vector<core::inventory::LockStack> stacks;
+        for (const auto& [id, value] : have) {
+            stacks.push_back({ id, value, inventory_.count_of(id) });
+        }
+        const auto picked{ core::inventory::pick_locks(stacks, amount) };
+        if (!picked) {
+            reply(fmt::format(
+                "`4Oops: ``Can't make exactly `w{} WL`` from your locks (you have {} WL in total). Break a bigger lock first.",
+                amount,
+                inventory_.lock_balance()
+            ));
+            return Result::Failed;
+        }
+
+        std::string plan;
+        for (const auto& [id, count] : *picked) {
+            jobs.push_back({ id, count });
+            plan += fmt::format("{}`w{}`` {}", plan.empty() ? "" : " + ", count, name_of(id));
+        }
+        reply(fmt::format("`o{} WL = {}", amount, plan));
         return start(jobs, ctx.registry.prefix()) ? Result::Success : Result::Failed;
     }
+
+private:
+    std::string name_;
+    bool amount_;
 };
 
 // /dw, /ddl, /db [amount]: one kind of lock.

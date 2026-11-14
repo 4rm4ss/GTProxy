@@ -14,7 +14,7 @@ class CommandRegistry;
 // items, looks and info. Buttons run the same code as the chat commands.
 class Menu {
 public:
-    enum class Page { Main, Worlds, Items, Looks, Info, Inventory, DropAll };
+    enum class Page { Main, Worlds, Items, Looks, Info, Inventory, DropAll, Commands };
 
     using Runner = std::function<bool(const std::string&)>;
 
@@ -48,6 +48,7 @@ private:
     [[nodiscard]] std::string info_page() const;
     [[nodiscard]] std::string inventory_page() const;
     [[nodiscard]] std::string drop_all_page() const;
+    [[nodiscard]] std::string commands_page() const;
 
     core::handlers::FeatureHandler& features_;
     core::handlers::InventoryHandler& inventory_;
