@@ -26,16 +26,19 @@ add_executable(GTProxy_tests
     scripting/test_field_binding.cpp
     core/test_certificate.cpp
     core/test_session_log.cpp
+    network/test_enet_packet.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
     ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp
     ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/src)
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/lib/enet/include)
 
 target_link_libraries(GTProxy_tests PRIVATE
     GTest::gtest_main
+    enet
     fmt::fmt
     spdlog::spdlog
     glm::glm
