@@ -109,6 +109,9 @@ jobs:
           foreach ($m in "HTTPS server listening on port 443", "Proxy server listening on port 16999", "Loaded script: rainbow.lua") {
             if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
           }
+          $firewall = Select-String -Path $session.FullName -Pattern "Firewall" | ForEach-Object { $_.Line }
+          if (-not $firewall) { throw "missing Windows Firewall status in the log" }
+          $firewall | ForEach-Object { Write-Host $_ }
           Write-Host "Smoke test passed"
           $global:LASTEXITCODE = 0
 

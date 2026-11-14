@@ -73,7 +73,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 if (WIN32)
     # Crash reports resolve function names via dbghelp.
-    target_link_libraries(${PROJECT_NAME} dbghelp)
+    target_link_libraries(${PROJECT_NAME} dbghelp ole32 oleaut32)
 endif ()
 
 if (MSVC)

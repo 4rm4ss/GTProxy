@@ -16,6 +16,7 @@
 #include "core/certificate.hpp"
 #include "core/core.hpp"
 #include "core/crash_handler.hpp"
+#include "core/firewall_check.hpp"
 #include "core/logger.hpp"
 #include "core/session_log.hpp"
 
@@ -203,6 +204,7 @@ int main(const int argc, char** argv)
             return finish(2, "unknown option");
         }
 
+        core::firewall::log_status();
         g_core = std::make_unique<core::Core>();
 
         std::signal(SIGINT, signal_handler);
