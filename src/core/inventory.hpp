@@ -45,6 +45,16 @@ struct ItemDialog {
 [[nodiscard]] std::string drop_request(std::uint16_t item_id);
 [[nodiscard]] std::string trash_request(std::uint16_t item_id);
 
+// Lock item IDs that never change.
+inline constexpr std::uint16_t WORLD_LOCK{ 242 };
+inline constexpr std::uint16_t DIAMOND_LOCK{ 1796 };
+inline constexpr std::uint16_t BLUE_GEM_LOCK{ 7188 };
+
 // World Lock currency: value in World Locks for the lock items, 0 otherwise.
-[[nodiscard]] std::uint64_t lock_value(std::string_view item_name);
+// Known IDs work even when items.dat could not be read; newer locks (Black
+// Gem Lock) are recognised by name.
+[[nodiscard]] std::uint64_t lock_value(std::uint16_t item_id, std::string_view item_name = {});
+
+// Name of the lock items above without items.dat ("" for other IDs).
+[[nodiscard]] std::string_view known_name(std::uint16_t item_id);
 }

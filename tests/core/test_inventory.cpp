@@ -99,9 +99,14 @@ TEST(InventoryTest, RequestsAndReplies)
 
 TEST(InventoryTest, LockValues)
 {
-    EXPECT_EQ(lock_value("World Lock"), 1u);
-    EXPECT_EQ(lock_value("Diamond Lock"), 100u);
-    EXPECT_EQ(lock_value("Blue Gem Lock"), 10'000u);
-    EXPECT_EQ(lock_value("Black Gem Lock"), 1'000'000u);
-    EXPECT_EQ(lock_value("Small Lock"), 0u);
+    // Known IDs work without items.dat (no name).
+    EXPECT_EQ(lock_value(242), 1u);
+    EXPECT_EQ(lock_value(1796), 100u);
+    EXPECT_EQ(lock_value(7188), 10'000u);
+    EXPECT_EQ(known_name(242), "World Lock");
+    EXPECT_EQ(known_name(2), "");
+    // Newer locks by name.
+    EXPECT_EQ(lock_value(20000, "Black Gem Lock"), 1'000'000u);
+    EXPECT_EQ(lock_value(202, "Small Lock"), 0u);
+    EXPECT_EQ(lock_value(243, "World Lock Seed"), 0u);
 }

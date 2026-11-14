@@ -77,9 +77,9 @@ void CommandHandler::register_default_commands()
     registry_.add(std::make_unique<InventoryCommand>(features_, inventory_, menu_));
     registry_.add(std::make_unique<DropAllCommand>(features_, inventory_, menu_));
     registry_.add(std::make_unique<DropLocksCommand>(features_, inventory_));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "dw", "World Lock"));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "ddl", "Diamond Lock"));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "db", "Blue Gem Lock"));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "dw", "World Lock", core::inventory::WORLD_LOCK));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "ddl", "Diamond Lock", core::inventory::DIAMOND_LOCK));
+    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "db", "Blue Gem Lock", core::inventory::BLUE_GEM_LOCK));
     registry_.add(std::make_unique<DropItemCommand>(features_, inventory_));
     registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastDrop));
     registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastTrash));

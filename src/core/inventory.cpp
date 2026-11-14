@@ -179,8 +179,25 @@ std::string trash_request(const std::uint16_t item_id)
     return fmt::format("action|trash\n|itemID|{}\n", item_id);
 }
 
-std::uint64_t lock_value(const std::string_view item_name)
+std::string_view known_name(const std::uint16_t item_id)
 {
+    switch (item_id) {
+    case WORLD_LOCK: return "World Lock";
+    case DIAMOND_LOCK: return "Diamond Lock";
+    case BLUE_GEM_LOCK: return "Blue Gem Lock";
+    default: return {};
+    }
+}
+
+std::uint64_t lock_value(const std::uint16_t item_id, const std::string_view item_name)
+{
+    switch (item_id) {
+    case WORLD_LOCK: return 1;
+    case DIAMOND_LOCK: return 100;
+    case BLUE_GEM_LOCK: return 10'000;
+    default: break;
+    }
+
     if (item_name == "World Lock") {
         return 1;
     }

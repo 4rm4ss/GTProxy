@@ -513,6 +513,28 @@ void run_item_checks(Endpoint& client, Endpoint& game_server, const std::uint16_
     pump_for(300ms);
     client.inbox.clear();
 
+    // A single World Lock: the server may drop it without the "how many?"
+    // dialog; /dd must still count it as dropped (not as refused).
+    {
+        const Bytes one_lock{ inventory_packet({ { 18, 1, 0 }, { 32, 1, 0 }, { 242, 1, 0 } }) };
+        send(game_server, one_lock);
+        std::ignore = receive(client);
+        input(client, "/dd");
+        const auto request{ receive_text(game_server) };
+        check(request == "action|drop\n|itemID|242\n", "/dd drops a single World Lock");
+        send(game_server, removed_from_inventory(242, 1));
+        bool dropped{ false };
+        for (auto call{ receive_call(client, "OnConsoleMessage") }; call; call = receive_call(client, "OnConsoleMessage", 1000ms)) {
+            const auto text{ call->first.get<std::string>(1) };
+            if (text.find("Drop finished") != std::string::npos) {
+                dropped = text.find("`w1`` stack(s) dropped") != std::string::npos && text.find("refused") == std::string::npos;
+                break;
+            }
+        }
+        check(dropped, "a drop without the dialog counts as dropped");
+        client.inbox.clear();
+    }
+
     // /dropall now: everything except favourites/worn/fist/wrench; biggest first.
     send(game_server, inventory);
     std::ignore = receive(client);

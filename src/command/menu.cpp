@@ -7,6 +7,7 @@
 
 #include "command_registry.hpp"
 #include "../core/features.hpp"
+#include "../core/inventory.hpp"
 #include "../item/item_database.hpp"
 #include "../world/world.hpp"
 
@@ -91,6 +92,9 @@ std::string name_of(const std::uint16_t id)
 {
     if (const auto* info{ item::ItemDatabase::instance().get_item(id) }) {
         return sanitize(info->item_name);
+    }
+    if (const auto known{ core::inventory::known_name(id) }; !known.empty()) {
+        return std::string{ known };
     }
     return fmt::format("Item {}", id);
 }

@@ -3,11 +3,13 @@
 #include <optional>
 #include <string>
 #include <fmt/format.h>
+#include <spdlog/spdlog.h>
 
 #include "../command.hpp"
 #include "../command_registry.hpp"
 #include "../menu.hpp"
 #include "../../core/features.hpp"
+#include "../../core/inventory.hpp"
 #include "../../core/handlers/feature_handler.hpp"
 #include "../../core/handlers/inventory_handler.hpp"
 #include "../../item/item_database.hpp"
@@ -72,7 +74,33 @@ protected:
         if (const auto* info{ item::ItemDatabase::instance().get_item(id) }) {
             return info->item_name;
         }
+        if (const auto known{ core::inventory::known_name(id) }; !known.empty()) {
+            return std::string{ known };
+        }
         return fmt::format("item {}", id);
+    }
+
+    // Locks you carry (by ID, or by name for newer locks), most valuable first.
+    [[nodiscard]] std::vector<std::pair<std::uint16_t, std::uint64_t>> locks() const
+    {
+        std::vector<std::pair<std::uint16_t, std::uint64_t>> out;
+        for (const auto& [id, item] : inventory_.items()) {
+            if (const auto value{ core::inventory::lock_value(id, name_of(id)) }; value > 0 && item.count > 0) {
+                out.emplace_back(id, value);
+            }
+        }
+        std::ranges::sort(out, [](const auto& a, const auto& b) { return a.second > b.second; });
+        return out;
+    }
+
+    // Says why there is nothing to work with.
+    [[nodiscard]] bool inventory_ready() const
+    {
+        if (!inventory_.known()) {
+            reply("`4Oops: ``The proxy has not seen your inventory yet - log in again with the proxy running (see the log).");
+            return false;
+        }
+        return true;
     }
 
     bool start(const std::vector<core::handlers::InventoryHandler::Job>& jobs, const char prefix = '/') const
@@ -170,16 +198,16 @@ public:
 
     Result execute(const Context& ctx) override
     {
+        if (!inventory_ready()) {
+            return Result::Failed;
+        }
+
         std::vector<core::handlers::InventoryHandler::Job> jobs;
-        // Biggest value first.
-        for (const char* lock : { "Black Gem Lock", "Blue Gem Lock", "Diamond Lock", "World Lock" }) {
-            for (const auto& [id, item] : inventory_.items()) {
-                if (name_of(id) == lock) {
-                    jobs.push_back({ id, 0 });
-                }
-            }
+        for (const auto& [id, value] : locks()) {
+            jobs.push_back({ id, 0 });
         }
         if (jobs.empty()) {
+            spdlog::info("/dd: no locks among {} inventory items", inventory_.items().size());
             reply("`oYou have no locks.");
             return Result::Failed;
         }
@@ -190,8 +218,8 @@ public:
 // /dw, /ddl, /db [amount]: one kind of lock.
 class DropLockCommand final : public ItemCommand {
 public:
-    DropLockCommand(core::handlers::FeatureHandler& f, core::handlers::InventoryHandler& i, std::string name, std::string lock)
-        : ItemCommand{ f, i }, name_{ std::move(name) }, lock_{ std::move(lock) } { }
+    DropLockCommand(core::handlers::FeatureHandler& f, core::handlers::InventoryHandler& i, std::string name, std::string lock, const std::uint16_t lock_id)
+        : ItemCommand{ f, i }, name_{ std::move(name) }, lock_{ std::move(lock) }, lock_id_{ lock_id } { }
 
     [[nodiscard]] std::string_view name() const override { return name_; }
     [[nodiscard]] std::string description() const override { return fmt::format("Drop {}s: {} [amount]", lock_, name_); }
@@ -204,10 +232,11 @@ public:
             return Result::InvalidArguments;
         }
 
-        for (const auto& [id, item] : inventory_.items()) {
-            if (name_of(id) == lock_) {
-                return start({ { id, amount } }, ctx.registry.prefix()) ? Result::Success : Result::Failed;
-            }
+        if (!inventory_ready()) {
+            return Result::Failed;
+        }
+        if (inventory_.count_of(lock_id_) > 0) {
+            return start({ { lock_id_, amount } }, ctx.registry.prefix()) ? Result::Success : Result::Failed;
         }
         reply(fmt::format("`oYou have no {}s.", lock_));
         return Result::Failed;
@@ -216,6 +245,7 @@ public:
 private:
     std::string name_;
     std::string lock_;
+    std::uint16_t lock_id_;
 };
 
 class DropItemCommand final : public ItemCommand {
@@ -335,12 +365,8 @@ public:
         }
 
         std::string parts;
-        for (const char* lock : { "Black Gem Lock", "Blue Gem Lock", "Diamond Lock", "World Lock" }) {
-            for (const auto& [id, item] : inventory_.items()) {
-                if (name_of(id) == lock) {
-                    parts += fmt::format("{}`w{}`` {}", parts.empty() ? "" : ", ", item.count, lock);
-                }
-            }
+        for (const auto& [id, value] : locks()) {
+            parts += fmt::format("{}`w{}`` {}", parts.empty() ? "" : ", ", inventory_.count_of(id), name_of(id));
         }
         reply(fmt::format("`oLocks: {} = `w{} WL``", parts.empty() ? "none" : parts, inventory_.lock_balance()));
         return Result::Success;

@@ -36,6 +36,9 @@ std::string item_name(const std::uint16_t id)
     if (const auto* info{ item::ItemDatabase::instance().get_item(id) }) {
         return info->item_name;
     }
+    if (const auto known{ inventory::known_name(id) }; !known.empty()) {
+        return std::string{ known };
+    }
     return fmt::format("item {}", id);
 }
 }
@@ -86,9 +89,7 @@ std::uint64_t InventoryHandler::lock_balance() const
 {
     std::uint64_t total{ 0 };
     for (const auto& [id, item] : items_) {
-        if (const auto* info{ item::ItemDatabase::instance().get_item(id) }) {
-            total += inventory::lock_value(info->item_name) * item.count;
-        }
+        total += inventory::lock_value(id, item_name(id)) * item.count;
     }
     return total;
 }
@@ -283,7 +284,8 @@ void InventoryHandler::on_modify(const event::Event& event)
         items_.erase(id);
     }
 
-    if (current_ && current_->item_id == id && stage_ == Stage::WaitAck && removed > 0) {
+    // Some drops (e.g. a single item) happen without the "how many?" dialog.
+    if (current_ && current_->item_id == id && removed > 0) {
         finish_current(true);
     }
 }
@@ -299,7 +301,7 @@ void InventoryHandler::on_object(const event::Event& event)
     const auto change{ static_cast<std::int32_t>(pkt->game_packet.net_id) };
 
     // A new object of the item we are dropping: the drop went through.
-    if (change == -1 && current_ && stage_ == Stage::WaitAck && pkt->item_id == current_->item_id) {
+    if (change == -1 && current_ && pkt->item_id == current_->item_id) {
         finish_current(true);
         return;
     }
@@ -351,7 +353,7 @@ void InventoryHandler::on_dialog(const event::Event& event)
 
     // Fast drop / fast trash for what you drop or trash yourself. Never for
     // locks: those keep the normal "how many?" window.
-    const bool is_lock{ inventory::lock_value(item_name(dialog->item_id)) > 0 };
+    const bool is_lock{ inventory::lock_value(dialog->item_id, item_name(dialog->item_id)) > 0 };
     const bool fast{
         dialog->count > 0
         && ((dialog->dialog_name == "drop_item" && fast_drop_)
