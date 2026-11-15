@@ -40,7 +40,7 @@ using Path = std::vector<TilePos>;
 }
 
 // A* over the grid. The start tile is never checked (you are already there);
-// doors are only entered as the goal.
+// doors open to you are walked through, other doors only entered as the goal.
 [[nodiscard]] std::expected<Path, PathError> find_path(
     const Grid& grid,
     TilePos start,

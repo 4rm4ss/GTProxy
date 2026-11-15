@@ -11,7 +11,7 @@ using map::Reach;
 using map::TilePos;
 
 namespace {
-// '.' free, '#' block, 'D' door, '^' lava, 'P' free tile where you stand
+// '.' free, '#' block, 'D' door, 'O' door open to you, '^' lava, 'P' free tile where you stand
 struct Scene {
     map::Grid grid;
     glm::vec2 position{ 0.0f };
@@ -26,6 +26,7 @@ Scene scene(const std::vector<std::string>& rows)
             switch (rows[y][x]) {
             case '#': cells.push_back(Cell::Solid); break;
             case 'D': cells.push_back(Cell::Door); break;
+            case 'O': cells.push_back(Cell::OpenDoor); break;
             case '^': cells.push_back(Cell::Hazard); break;
             case 'P':
                 s.position = map::tile_to_world({ x, y });
@@ -176,6 +177,18 @@ TEST(MapReachabilityTest, DoorsOnlyAsTarget)
         "#####",
     }) };
     EXPECT_EQ(map::check_reach(spawn.grid, map::tile_to_world({ 0, 1 }), {}, { 4, 1 }).status, Reach::Reachable);
+}
+
+TEST(MapReachabilityTest, DoorsOpenToYouLeadFurther)
+{
+    const auto s{ scene({
+        "#####",
+        "P.O..",
+        "#####",
+    }) };
+    const auto r{ reach(s, { 4, 1 }) };
+    EXPECT_EQ(r.status, Reach::Reachable);
+    EXPECT_EQ(r.steps, 4u);
 }
 
 TEST(MapReachabilityTest, BodySizeDecidesWhereYouFit)

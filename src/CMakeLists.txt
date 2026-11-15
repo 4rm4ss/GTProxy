@@ -80,6 +80,8 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} dbghelp ole32 oleaut32)
     # The map window opens through ShellExecute.
     target_link_libraries(${PROJECT_NAME} shell32)
+    # --install-cert: the user's trusted root certificates.
+    target_link_libraries(${PROJECT_NAME} crypt32)
 endif ()
 
 if (MSVC)

@@ -155,6 +155,7 @@ private:
 
     std::uint64_t tiles_revision_{ 1 };
     std::uint64_t grid_revision_{ 0 };
+    map::Doors doors_;
     std::uint64_t published_tiles_{ 0 };
     map::Grid grid_;
 

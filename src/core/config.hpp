@@ -41,6 +41,10 @@ public:
         // run and jump along, rising at most jump_height tiles per jump.
         bool gravity{ false };
         int jump_height{ 3 };
+        // Walk through doors and portals that are open to you (public, in an
+        // unlocked world, or under a lock you own or have access to). A door
+        // with a destination still takes you there; the main door never.
+        bool walk_through_doors{ true };
     };
 
     struct WrapperConfig {

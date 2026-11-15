@@ -115,7 +115,7 @@ jobs:
           $log = (Get-Content stdout.log, $session.FullName -Raw -ErrorAction SilentlyContinue) -join "`n"
           # The features are modules on top of the core: all of them must load.
           $expected = @("HTTPS server listening on port 443", "Proxy server listening on port 16999")
-          foreach ($id in "drop", "info", "looks", "reachability", "walk", "worlds") { $expected += "Module '$id' 1.0.0 loaded from modules/$id" }
+          foreach ($id in "camera", "drop", "info", "looks", "reachability", "walk", "worlds") { $expected += "Module '$id' 1.0.0 loaded from modules/$id" }
           foreach ($m in $expected) {
             if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
           }

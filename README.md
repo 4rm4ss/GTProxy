@@ -116,6 +116,7 @@ normal chat.
 | `/find <text>` / `/item <id>` | Search items.dat by name / show an item | info |
 | `/debug player\|world\|tile x y\|objects` | What the proxy knows (players, world, a tile, dropped items) | info |
 | `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen | looks |
+| `/zoom <value> [ms]`, `/zoom reset` | Zoom the game camera beyond the mouse wheel's range (the server's own `OnZoomCamera` call, sent to your game only) | camera |
 | `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) | drop |
 | `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) | drop |
 | `/daw` | Drop all locks (World, Diamond, Blue Gem, Black Gem) | drop |
@@ -181,7 +182,8 @@ somewhere else (door, respawn, correction) the walk stops at once.
    "walk_speed": 250,
    "step_interval_ms": 100,
    "gravity": false,
-   "jump_height": 3
+   "jump_height": 3,
+   "walk_through_doors": true
 }
 ```
 
@@ -189,11 +191,18 @@ somewhere else (door, respawn, correction) the walk stops at once.
 `jump_height` tiles per jump, then falling); the default goes through any free
 tile.
 
+Doors and portals are walked through when they are open to you, as in the
+game: a public door, any door in a world without a lock, or a door under a
+lock you own or have access to (the map draws them with a green frame).
+Other doors and the world's main door (EXIT) are only walked to. A door with
+a destination still takes you there when you step in. `walk_through_doors:
+false` treats every door as a destination only.
+
 ### Modules and profiles
 
 The proxy is an empty core with the features as modules on top: folders of
 Lua code in `modules/` next to `Proxy.exe` (`drop`, `worlds`, `looks`,
-`info`, `walk`, `reachability`). Without them the proxy only forwards
+`camera`, `info`, `walk`, `reachability`). Without them the proxy only forwards
 packets. Add one by copying its folder there and restarting the proxy;
 switch one off in `config/modules.json` (`"enabled": false`, then
 `cfg reload` in the console). Their

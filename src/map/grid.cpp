@@ -1,11 +1,49 @@
 #include "grid.hpp"
 
+#include <algorithm>
+#include <array>
 #include <utility>
 
 #include "../item/item_database.hpp"
 #include "../world/tile_map.hpp"
 
 namespace map {
+namespace {
+// Locks that cover an area (their tiles are marked Locked); any other lock
+// (World Lock, Diamond Lock ...) covers the whole world.
+constexpr std::array<std::uint16_t, 4> AREA_LOCKS{ 202, 204, 206, 4994 };
+
+const world::tile_extra::Lock* lock_data(const world::Tile& tile)
+{
+    return tile.extra.get_as<world::tile_extra::Lock>();
+}
+
+// The lock that decides who may use a tile; nullptr when nothing locks it.
+const world::Tile* governing_lock(const world::Tile& tile, const std::vector<world::Tile>& tiles, const world::Tile* world_lock)
+{
+    if (world::has_flag(tile.flag, world::TileFlag::Locked)) {
+        return tile.lock_parent_tile < tiles.size() ? &tiles[tile.lock_parent_tile] : &tile;
+    }
+    return world_lock;
+}
+
+bool may_enter(const world::Tile& door, const std::vector<world::Tile>& tiles, const world::Tile* world_lock, const std::uint32_t user_id)
+{
+    if (world::has_flag(door.flag, world::TileFlag::Public)) {
+        return true;
+    }
+    const auto* lock{ governing_lock(door, tiles, world_lock) };
+    if (!lock) {
+        return true;
+    }
+    const auto* data{ lock_data(*lock) };
+    if (!data || user_id == 0) {
+        return false;   // locked, and the proxy cannot tell whether you have access
+    }
+    return data->owner_id == user_id || std::ranges::find(data->accesses, user_id) != data->accesses.end();
+}
+}
+
 std::string_view describe(const Cell cell)
 {
     switch (cell) {
@@ -14,6 +52,7 @@ std::string_view describe(const Cell cell)
     case Cell::Platform: return "platform";
     case Cell::Hazard: return "dangerous";
     case Cell::Door: return "door";
+    case Cell::OpenDoor: return "door, open to you";
     }
     return "unknown";
 }
@@ -96,13 +135,31 @@ Grid::Grid(const glm::ivec2 size, std::vector<Cell> cells)
     cells_ = std::move(cells);
 }
 
-Grid Grid::from_tile_map(const WorldTileMap& tile_map)
+Grid Grid::from_tile_map(const WorldTileMap& tile_map, const Doors& doors)
 {
     const auto& tiles{ tile_map.get_tiles() };
+    const auto& items{ item::ItemDatabase::instance() };
+
+    const world::Tile* world_lock{ nullptr };
+    for (const auto& tile : tiles) {
+        if (lock_data(tile) && std::ranges::find(AREA_LOCKS, tile.foreground) == AREA_LOCKS.end()) {
+            world_lock = &tile;
+            break;
+        }
+    }
+
     std::vector<Cell> cells;
     cells.reserve(tiles.size());
     for (const auto& tile : tiles) {
-        cells.push_back(classify(tile));
+        auto cell{ classify(tile) };
+        if (cell == Cell::Door && doors.walk_through) {
+            const auto* info{ items.get_item(tile.foreground) };
+            const bool main_door{ info && info->item_type == item::ItemType::Door };
+            if (!main_door && may_enter(tile, tiles, world_lock, doors.user_id)) {
+                cell = Cell::OpenDoor;
+            }
+        }
+        cells.push_back(cell);
     }
 
     return Grid{ tile_map.get_size(), std::move(cells) };

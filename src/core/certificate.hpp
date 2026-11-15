@@ -22,9 +22,10 @@ struct Paths {
 // Throws std::runtime_error on failure.
 [[nodiscard]] Paths ensure(const std::filesystem::path& directory);
 
-// Adds/removes the CA in the current user's trust store (Windows: certutil,
-// asks for confirmation; macOS: login keychain). Returns false if it failed or
-// the platform needs manual steps (which are logged).
+// Adds/removes the CA in the current user's trust store (Windows: the
+// certificate API, Windows asks for confirmation; macOS: login keychain).
+// Returns false if it failed or the platform needs manual steps (which are
+// logged).
 bool install_ca(const Paths& paths);
 bool uninstall_ca();
 }

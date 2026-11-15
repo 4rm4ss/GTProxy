@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -11,7 +12,7 @@ using map::PathError;
 using map::TilePos;
 
 namespace {
-// '.' open, '#' solid, '=' platform, '^' hazard, 'D' door
+// '.' open, '#' solid, '=' platform, '^' hazard, 'D' door, 'O' door open to you
 map::Grid grid_from(const std::vector<std::string>& rows)
 {
     const int height{ static_cast<int>(rows.size()) };
@@ -24,6 +25,7 @@ map::Grid grid_from(const std::vector<std::string>& rows)
             case '=': cells.push_back(Cell::Platform); break;
             case '^': cells.push_back(Cell::Hazard); break;
             case 'D': cells.push_back(Cell::Door); break;
+            case 'O': cells.push_back(Cell::OpenDoor); break;
             default: cells.push_back(Cell::Open); break;
             }
         }
@@ -146,6 +148,19 @@ TEST(MapPathfinderTest, DoorsOnlyAsDestination)
     const auto into_door{ map::find_path(grid, { 0, 1 }, { 2, 1 }) };
     ASSERT_TRUE(into_door);
     EXPECT_EQ(into_door->back(), (TilePos{ 2, 1 }));
+}
+
+TEST(MapPathfinderTest, ThroughADoorOpenToYou)
+{
+    const auto grid{ grid_from({
+        "#####",
+        "..O..",
+        "#####",
+    }) };
+    const auto path{ map::find_path(grid, { 0, 1 }, { 4, 1 }) };
+    ASSERT_TRUE(path);
+    EXPECT_EQ(path->back(), (TilePos{ 4, 1 }));
+    EXPECT_NE(std::ranges::find(*path, TilePos{ 2, 1 }), path->end());
 }
 
 TEST(MapPathfinderTest, Errors)

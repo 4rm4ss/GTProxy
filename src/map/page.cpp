@@ -93,7 +93,8 @@ button.active { border-color: var(--accent); color: var(--accent); }
   <span class="sw" style="background:#e6e9ef"></span>players &nbsp;
   <span class="sw" style="background:#4fc3ff"></span>path<br>
   <span class="sw" style="background:#ff4d4d"></span>dangerous &nbsp;
-  <span class="sw" style="border:2px solid #7aa7ff"></span>door</p>
+  <span class="sw" style="border:2px solid #5fd38d"></span>door you can pass &nbsp;
+  <span class="sw" style="border:2px solid #7aa7ff"></span>door (only to enter)</p>
   <p>Walking sends the server the same moves the game sends while you run, at normal speed.</p>
 </div>
 )GTPROXY" };
@@ -161,7 +162,7 @@ function itemColor(id, shade) {
   return c;
 }
 function itemName(id) { const it = tiles.items[id]; return it ? it.name : "Item " + id; }
-const CELL_NAMES = ["free", "solid", "platform", "dangerous", "door"];
+const CELL_NAMES = ["free", "solid", "platform", "dangerous", "door", "door, open to you"];
 </script>
 )GTPROXY" };
 
@@ -192,10 +193,10 @@ function draw() {
       if (fg) {
         ctx.fillStyle = itemColor(fg, 0);
         if (cell === 2) ctx.fillRect(sx + pad, sy + pad, ts - pad * 2, Math.max(2, ts * 0.3));
-        else if (cell === 4) { ctx.globalAlpha = 0.55; ctx.fillRect(sx + pad, sy + pad, ts - pad * 2, ts - pad * 2); ctx.globalAlpha = 1; }
+        else if (cell === 4 || cell === 5) { ctx.globalAlpha = 0.55; ctx.fillRect(sx + pad, sy + pad, ts - pad * 2, ts - pad * 2); ctx.globalAlpha = 1; }
         else ctx.fillRect(sx + pad, sy + pad, ts - pad * 2, ts - pad * 2);
         if (cell === 3) { ctx.fillStyle = "rgba(255,60,60,0.45)"; ctx.fillRect(sx, sy, ts, ts); }
-        if (cell === 4 && ts > 5) { ctx.strokeStyle = "#7aa7ff"; ctx.lineWidth = Math.max(1, ts / 14); ctx.strokeRect(sx + 1, sy + 1, ts - 2, ts - 2); }
+        if ((cell === 4 || cell === 5) && ts > 5) { ctx.strokeStyle = cell === 5 ? "#5fd38d" : "#7aa7ff"; ctx.lineWidth = Math.max(1, ts / 14); ctx.strokeRect(sx + 1, sy + 1, ts - 2, ts - 2); }
       }
     }
   }

@@ -277,7 +277,7 @@ def check_module_log(log):
     check(log.count("Module 'reachability' 1.0.0 loaded from modules/reachability") == 2,
           "reachability loaded at start and again after being switched back on")
     check("Module 'whereami' 1.0.0 loaded from modules/whereami" in log, "copied example module whereami loaded")
-    for module in ("drop", "info", "looks", "walk", "worlds"):
+    for module in ("camera", "drop", "info", "looks", "walk", "worlds"):
         check(f"Module '{module}' 1.0.0 loaded from modules/{module}" in log, f"shipped module {module} loaded")
     check("Module skipped: modules/badapi: needs module API version 99, this proxy has versions 1 to 2: not loaded" in log,
           "module asking for another API version: logged, not loaded")

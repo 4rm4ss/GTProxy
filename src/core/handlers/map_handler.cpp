@@ -69,6 +69,7 @@ MapHandler::MapHandler(
 {
     path_options_.gravity = config.gravity;
     path_options_.jump_height = std::clamp(config.jump_height, 1, 20);
+    doors_.walk_through = config.walk_through_doors;
 
     const auto listen = [this](const packet::PacketId id, const std::int8_t priority, auto handler) {
         const auto type{ event::packet_event_type(id) };
@@ -98,12 +99,13 @@ MapHandler::MapHandler(
     }
 
     spdlog::info(
-        "Map: walking at {} px/s, a step every {} ms, {}",
+        "Map: walking at {} px/s, a step every {} ms, {}, {}",
         walk_speed_,
         step_interval_.count(),
         path_options_.gravity
             ? fmt::format("on foot (jumps up to {} tiles)", path_options_.jump_height)
-            : std::string{ "through any free tile" }
+            : std::string{ "through any free tile" },
+        doors_.walk_through ? "through doors open to you" : "never through doors"
     );
 }
 
@@ -359,8 +361,16 @@ void MapHandler::update()
 
 const map::Grid& MapHandler::grid()
 {
+    // Which doors are open depends on who you are (known once you spawn).
+    const auto me{ world::World::instance().get_local_player().lock() };
+    const auto user_id{ me ? static_cast<std::uint32_t>(me->user_id()) : 0u };
+    if (user_id != doors_.user_id) {
+        doors_.user_id = user_id;
+        ++tiles_revision_;
+    }
+
     if (grid_revision_ != tiles_revision_) {
-        grid_ = map::Grid::from_tile_map(world::World::instance().get_tile_map());
+        grid_ = map::Grid::from_tile_map(world::World::instance().get_tile_map(), doors_);
         grid_revision_ = tiles_revision_;
     }
     return grid_;

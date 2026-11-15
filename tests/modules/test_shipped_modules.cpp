@@ -95,7 +95,7 @@ protected:
 TEST_F(Shipped, AllModulesLoad)
 {
     EXPECT_TRUE(problems.empty());
-    for (const auto* id : { "drop", "info", "looks", "reachability", "walk", "worlds" }) {
+    for (const auto* id : { "camera", "drop", "info", "looks", "reachability", "walk", "worlds" }) {
         EXPECT_TRUE(host.loaded(id)) << id;
     }
 
@@ -106,7 +106,7 @@ TEST_F(Shipped, AllModulesLoad)
     const std::set<std::string> expected{
         "back", "balance", "clickwalk", "daw", "db", "dd", "ddl", "debug", "drop", "dropall", "dw", "exit", "fastdrop",
         "fasttrash", "find", "goto", "inv", "item", "keep", "netid", "nick", "players", "pos", "rainbow", "reach",
-        "rejoin", "skin", "warp", "world",
+        "rejoin", "skin", "warp", "world", "zoom",
     };
     EXPECT_EQ(names, expected);
 
@@ -116,7 +116,7 @@ TEST_F(Shipped, AllModulesLoad)
     for (const auto& section : sections) {
         buttons.push_back(section.button);
     }
-    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_items", "page_looks", "page_info" }));
+    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_items", "page_looks", "page_camera", "page_info" }));
 }
 
 TEST_F(Shipped, DropModuleItemHelpers)
@@ -245,4 +245,30 @@ TEST_F(Shipped, WalkModuleAnswersClicks)
         event["notify"] = true;
     });
     EXPECT_EQ(services.messages.back(), "`o[map] Arrived at 2, 2.");
+}
+
+TEST_F(Shipped, CameraZoomsWithTheGamesOwnCall)
+{
+    host.run_command("zoom", { "0.25" }, Source::Game);
+    ASSERT_EQ(services.calls.size(), 1u);
+    EXPECT_EQ(services.calls[0].name, "OnZoomCamera");
+    EXPECT_FLOAT_EQ(std::get<float>(services.calls[0].args[0]), 0.25f);
+    EXPECT_EQ(std::get<std::int32_t>(services.calls[0].args[1]), 300);
+    EXPECT_TRUE(replied("Camera zoom `w0.25`` (kept when you enter a world)"));
+
+    // Entering a world resets the game's camera: the value is sent again.
+    host.emit("world_enter", [](sol::table& event) { event["name"] = "START"; });
+    run_for(std::chrono::milliseconds{ 1200 });
+    ASSERT_EQ(services.calls.size(), 2u);
+    EXPECT_FLOAT_EQ(std::get<float>(services.calls[1].args[0]), 0.25f);
+
+    host.run_command("zoom", { "reset" }, Source::Game);
+    EXPECT_FLOAT_EQ(std::get<float>(services.calls.back().args[0]), 1.0f);
+    host.emit("world_enter", [](sol::table& event) { event["name"] = "START"; });
+    run_for(std::chrono::milliseconds{ 1200 });
+    EXPECT_EQ(services.calls.size(), 3u);      // not kept any more
+
+    host.run_command("zoom", { "-1" }, Source::Game);
+    EXPECT_TRUE(replied("Usage"));
+    EXPECT_EQ(services.calls.size(), 3u);
 }

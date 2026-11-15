@@ -59,7 +59,8 @@ struct ReachResult {
 };
 
 // position: your avatar's position in world pixels, nothing if unknown.
-// Doors are only allowed as the target (stepping into one warps you).
+// Doors open to you (Cell::OpenDoor) are walked through; other doors are only
+// allowed as the target.
 [[nodiscard]] ReachResult check_reach(
     const Grid& grid,
     std::optional<glm::vec2> position,

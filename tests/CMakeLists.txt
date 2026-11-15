@@ -44,6 +44,7 @@ add_executable(GTProxy_tests
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
     ${CMAKE_SOURCE_DIR}/src/core/certificate.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/trust_store.cpp
     ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp
     ${CMAKE_SOURCE_DIR}/src/core/features.cpp
     ${CMAKE_SOURCE_DIR}/src/core/inventory.cpp
@@ -76,6 +77,11 @@ target_link_libraries(GTProxy_tests PRIVATE
     sol2::sol2
     LibreSSL::Crypto
     eventpp::eventpp)
+
+if (WIN32)
+    # src/core/trust_store.cpp (certificate.cpp's --install-cert).
+    target_link_libraries(GTProxy_tests PRIVATE crypt32)
+endif ()
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL

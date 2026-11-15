@@ -13,7 +13,7 @@ profiles switch groups of settings at once. All of it sits **next to
 ```
 Proxy.exe
 modules/              the features, one folder each
-  drop/  info/  looks/  reachability/  walk/  worlds/
+  camera/  drop/  info/  looks/  reachability/  walk/  worlds/
 config/               settings you edit
   modules.json
   modules/<id>.json
@@ -259,7 +259,11 @@ gtproxy.walk.active()
 ```
 
 The proxy's walking engine (a path over free tiles, sent as the game's own
-movement at walking speed). The `walk_end` event tells how it ended.
+movement at walking speed). Doors and portals open to you are walked through
+(public, in a world without a lock, or under a lock you own or have access
+to; `config.json` `map.walk_through_doors`); a door with a destination takes
+you there when you step in, and the main door (EXIT) is only walked to. The
+`walk_end` event tells how it ended.
 
 ### Reachability **(1)**
 
@@ -341,12 +345,20 @@ gtproxy.log.info("text")    -- also .warn and .error; lines start with [<id>]
 | `drop` | `/inv`, `/dropall [now\|stop\|speed <ms>]`, `/daw`, `/dd [WL]`, `/dw`, `/ddl`, `/db [amount]`, `/drop <item> [amount]`, `/fastdrop`, `/fasttrash`, `/keep [add\|del] <item>`, `/balance` | Items (inventory, drop all, locks, fast drop/trash, pause) | `dialog_timeout_ms`, `ack_timeout_ms`; your choices in `data/drop.json` |
 | `worlds` | `/warp <world> [door]`, `/back`, `/rejoin`, `/exit` | Worlds (warp, back, recent worlds) | `exit_timeout_ms` |
 | `looks` | `/nick [name]`, `/netid`, `/skin [hex] <code>`, `/rainbow [ms]` | Looks | `rainbow_ms` |
+| `camera` | `/zoom <value> [ms]`, `/zoom reset` | Camera (zoom presets) | `zoom`, `normal`, `time_ms`, `keep`, `keep_delay_ms`; your last value in `data/camera.json` |
 | `info` | `/pos`, `/players`, `/world`, `/find <name>`, `/item <id>`, `/debug ...` | Info | |
 | `walk` | `/goto <x> <y>`, `/goto stop`, `/clickwalk`; left click in the map window | | `tell_game` |
 | `reachability` | `/reach <x> <y>` (and `reach x y` in the console); right click in the map window | | `show_marker`, `show_steps`, `log_result` |
 
 The core keeps `/proxy` (the menu frame), `/proxyhelp` (all commands) and
 `/map` (open the map window).
+
+`camera` sends your game the server's own camera call, `OnZoomCamera(zoom,
+time in ms)`, which is not bound to the mouse wheel's range. Which values
+zoom out how far is up to the game client: try the page's presets, and
+`zoom` / `normal` in `config/modules/camera.json` set the values it uses. The
+game resets the camera when you enter a world (with `keep` the module sends
+your value again) and when you turn the mouse wheel.
 
 `examples/modules/whereami` (not installed) is a short API 1 example to copy
 into `modules/`. Item settings of earlier versions (`gtproxy-settings.txt`)

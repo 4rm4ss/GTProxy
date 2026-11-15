@@ -1,0 +1,16 @@
+{
+  "id": "camera",
+  "version": "1.0.0",
+  "api_version": 2,
+  "main": "main.lua",
+  "name": "Camera",
+  "description": "/zoom: sets the game camera's zoom with the game's own OnZoomCamera call, beyond the mouse wheel's range; the Camera page of /proxy.",
+  "author": "GTProxy",
+  "settings": {
+    "zoom": 0.5,
+    "normal": 1.0,
+    "time_ms": 300,
+    "keep": true,
+    "keep_delay_ms": 1000
+  }
+}

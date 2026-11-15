@@ -19,6 +19,8 @@
 #include <openssl/x509v3.h>
 #include <spdlog/spdlog.h>
 
+#include "trust_store.hpp"
+
 namespace core::certificate {
 namespace {
 constexpr std::array GROWTOPIA_HOSTS{
@@ -204,11 +206,13 @@ void create_server_certificate(const Paths& paths)
     }, false);
 }
 
+#ifndef __linux__
 int run(const std::string& command)
 {
     spdlog::info("Running: {}", command);
     return std::system(command.c_str());
 }
+#endif
 }
 
 Paths paths_in(const std::filesystem::path& directory)
@@ -254,8 +258,23 @@ bool install_ca(const Paths& paths)
 {
     const std::string ca{ std::filesystem::absolute(paths.ca_cert).string() };
 #ifdef _WIN32
-    // Current user's Root store; Windows asks for confirmation.
-    return run("certutil -user -addstore Root \"" + ca + "\"") == 0;
+    // Current user's Root store; Windows asks for confirmation. Through the
+    // certificate API rather than certutil: a command line would mangle
+    // folder names outside the system code page (Cyrillic ...).
+    const auto cert{ read_cert(paths.ca_cert) };
+    unsigned char* der{ nullptr };
+    const int length{ cert ? i2d_X509(cert.get(), &der) : -1 };
+    if (length <= 0) {
+        spdlog::error("Cannot read the local CA {}", ca);
+        return false;
+    }
+    spdlog::info("Adding {} to your trusted root certificates (Windows asks you to confirm)", ca);
+    const auto result{ trust_store::add_user_root({ reinterpret_cast<const std::byte*>(der), static_cast<std::size_t>(length) }) };
+    OPENSSL_free(der);
+    if (!result.ok) {
+        spdlog::error("Could not add the local CA: {}", result.error);
+    }
+    return result.ok;
 #elif defined(__APPLE__)
     return run("security add-trusted-cert -r trustRoot -k \"$HOME/Library/Keychains/login.keychain-db\" \"" + ca + "\"") == 0;
 #else

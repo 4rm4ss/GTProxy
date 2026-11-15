@@ -1,3 +1,6 @@
+#include <filesystem>
+#include <optional>
+
 #include <gtest/gtest.h>
 
 #include "item/item_database.hpp"
@@ -110,4 +113,82 @@ TEST(MapGridTest, FromTileMapWithoutItemsDat)
     EXPECT_EQ(grid.at({ 0, 0 }), Cell::Open);
     EXPECT_EQ(grid.at({ 1, 0 }), Cell::Solid);
     EXPECT_EQ(grid.at({ 2, 0 }), Cell::Open);
+}
+
+namespace {
+// A 4x1 world: a door at 1, 0 and, if given, a lock at 3, 0.
+WorldTileMap door_world(const std::uint16_t door_item, const TileFlag door_flags, const std::optional<world::tile_extra::Lock> lock, const std::uint16_t lock_item = 242)
+{
+    WorldTileMap tile_map{};
+    tile_map.get_size() = { 4, 1 };
+    tile_map.get_tiles().resize(4);
+    auto& door{ tile_map.get_tiles()[1] };
+    door.foreground = door_item;
+    door.flag = door_flags;
+    if (lock) {
+        auto& tile{ tile_map.get_tiles()[3] };
+        tile.foreground = lock_item;
+        tile.extra.type_ = world::tile_extra::Type::Lock;
+        tile.extra.data_ = *lock;
+        if (lock_item == 202) {     // a Small Lock covers the door
+            door.flag = door.flag | TileFlag::Locked;
+            door.lock_parent_tile = 3;
+        }
+    }
+    return tile_map;
+}
+
+// The bundled items.dat (resources/): what the game really calls doors.
+bool load_items_dat()
+{
+    const std::filesystem::path path{ std::filesystem::path{ GTPROXY_RESOURCES_DIR } / "items.dat" };
+    return std::filesystem::exists(path) && item::ItemDatabase::instance().load_from_file(path.string());
+}
+}
+
+TEST(MapGridTest, DoorsOpenToYouAreWalkedThrough)
+{
+    if (!load_items_dat()) {
+        GTEST_SKIP() << "resources/items.dat not found";
+    }
+    // 6 White Door: every world's main door (EXIT); 12 Door: a door you place.
+    const auto& items{ item::ItemDatabase::instance() };
+    ASSERT_NE(items.get_item(6), nullptr);
+    ASSERT_NE(items.get_item(12), nullptr);
+    EXPECT_EQ(items.get_item(6)->item_type, item::ItemType::Door) << items.get_item(6)->item_name;
+    EXPECT_EQ(items.get_item(12)->item_type, item::ItemType::UserDoor) << items.get_item(12)->item_name;
+
+    const world::tile_extra::Lock mine{ 0, 1005, {} };
+    const world::tile_extra::Lock theirs{ 0, 2000, { 1005 } };
+    const world::tile_extra::Lock stranger{ 0, 2000, { 3000 } };
+    const map::Doors me{ true, 1005 };
+    const auto at_door = [](const WorldTileMap& tile_map, const map::Doors& doors) {
+        return map::Grid::from_tile_map(tile_map, doors).at({ 1, 0 });
+    };
+
+    // No lock in the world: anyone walks through.
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, std::nullopt), me), Cell::OpenDoor);
+    for (std::uint32_t id{ 0 }; id < items.get_count(); ++id) {
+        if (const auto* info{ items.get_item(id) }; info && info->item_type == item::ItemType::Portal) {
+            EXPECT_EQ(at_door(door_world(static_cast<std::uint16_t>(id), TileFlag::None, std::nullopt), me), Cell::OpenDoor) << info->item_name;
+            break;
+        }
+    }
+    // A World Lock: the owner and those with access, or a public door.
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine), me), Cell::OpenDoor);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, theirs), me), Cell::OpenDoor);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, stranger), me), Cell::Door);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::Public, stranger), me), Cell::OpenDoor);
+    // Who you are is not known yet: a locked door stays closed.
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine), map::Doors{ true, 0 }), Cell::Door);
+    // A Small Lock over the door decides, not the world.
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine, 202), me), Cell::OpenDoor);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, stranger, 202), me), Cell::Door);
+    // The main door (EXIT) is never walked through; the option turns it all off.
+    EXPECT_EQ(at_door(door_world(6, TileFlag::None, std::nullopt), me), Cell::Door);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, std::nullopt), map::Doors{ false, 1005 }), Cell::Door);
+
+    EXPECT_TRUE(map::is_passable(Cell::OpenDoor));
+    EXPECT_FALSE(map::can_stand_on(Cell::OpenDoor));
+    item::ItemDatabase::instance().clear();
 }

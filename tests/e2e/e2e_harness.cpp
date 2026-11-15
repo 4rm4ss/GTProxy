@@ -916,10 +916,18 @@ Bytes build_map_world()
     }
     for (int y = 0; y < MAP_H; ++y) {
         for (int x = 0; x < MAP_W; ++x) {
-            bs.write<std::uint16_t>(map_fg(x, y));
+            // Top corners: a Door (12) and the main White Door (6), with the
+            // door data the server sends (label).
+            const std::uint16_t door{ y == 0 && x == 0 ? std::uint16_t{ 12 } : y == 0 && x == MAP_W - 1 ? std::uint16_t{ 6 } : std::uint16_t{ 0 } };
+            bs.write<std::uint16_t>(door != 0 ? door : map_fg(x, y));
             bs.write<std::uint16_t>(14);
             bs.write<std::uint16_t>(0);
-            bs.write<std::uint16_t>(0);
+            bs.write<std::uint16_t>(door != 0 ? 0x0001 : 0);   // Extra
+            if (door != 0) {
+                bs.write<std::uint8_t>(1);                    // door data
+                bs.write(std::string{ door == 6 ? "EXIT" : "BACK" });
+                bs.write<std::uint8_t>(0);
+            }
         }
     }
     for (int i = 0; i < 12; ++i) {
@@ -1131,6 +1139,11 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
             check(fg.size() == 96 && fg[7 * 12] == 2 && fg[4 * 12 + 6] == 10, "map: tile ids (dirt floor, rock wall)");
             check(cell.size() == 96 && cell[7 * 12] == 1 && cell[6 * 12 + 9] == 3 && cell[2 * 12 + 2] == 0, "map: walkability (solid, dangerous, free) from items.dat");
             check(tiles->find("\"2\":{\"name\":\"Dirt\",\"color\":\"#603913\"}") != std::string::npos, "map: block colour from its seed (Dirt brown)");
+            check(
+                fg.size() == 96 && fg[0] == 12 && fg[11] == 6 && cell.size() == 96 && cell[0] == 5 && cell[11] == 4,
+                fmt::format("map: a door in a world without a lock is walked through (cell 5), the main door (EXIT) only entered (cell 4) - got {}, {}",
+                    cell.size() == 96 ? cell[0] : -1, cell.size() == 96 ? cell[11] : -1)
+            );
         }
     }
 

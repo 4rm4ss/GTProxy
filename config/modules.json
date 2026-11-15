@@ -1,6 +1,7 @@
 {
   "profile": "default",
   "modules": {
+    "camera": { "enabled": true },
     "drop": { "enabled": true },
     "info": { "enabled": true },
     "looks": { "enabled": true },
