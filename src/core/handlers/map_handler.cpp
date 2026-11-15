@@ -289,14 +289,98 @@ std::string MapHandler::ReachReport::summary() const
     );
 }
 
-MapHandler::Result MapHandler::walk_to(const map::TilePos tile)
+MapHandler::Result MapHandler::walk_to(const map::TilePos tile, const std::optional<bool> gravity)
 {
-    auto result{ plan_walk(tile) };
+    auto result{ plan_walk(tile, options_with(gravity)) };
     status_ = result.message;
     return result;
 }
 
-MapHandler::Result MapHandler::plan_walk(const map::TilePos tile)
+map::PathOptions MapHandler::options_with(const std::optional<bool> gravity) const
+{
+    auto options{ path_options_ };
+    if (gravity) {
+        options.gravity = *gravity;
+    }
+    return options;
+}
+
+std::optional<std::pair<glm::vec2, map::Body>> MapHandler::me() const
+{
+    const auto& world{ world::World::instance() };
+    const auto player{ world.get_local_player().lock() };
+    if (!session_.in_world() || !player) {
+        return std::nullopt;
+    }
+    return std::make_pair(glm::vec2{ player->position() }, map::Body::from_colrect(player->collision()));
+}
+
+MapHandler::Route MapHandler::reach_route(const map::TilePos target)
+{
+    Route route{};
+    const auto avatar{ me() };
+    if (!avatar || grid().empty()) {
+        route.reason = "no world or position yet";
+        return route;
+    }
+    route.tiles = map::reach_path(grid(), avatar->first, avatar->second, target);
+    route.ok = !route.tiles.empty();
+    if (!route.ok) {
+        route.reason = map::check_reach(grid(), avatar->first, avatar->second, target).status == map::Reach::TargetBlocked
+            ? "a block is in that tile"
+            : "there is no way to get there";
+    }
+    return route;
+}
+
+MapHandler::Route MapHandler::walk_route(const map::TilePos target, const std::optional<bool> gravity)
+{
+    Route route{};
+    const auto avatar{ me() };
+    if (!avatar || grid().empty()) {
+        route.reason = "no world or position yet";
+        return route;
+    }
+    const map::TilePos start{ map::player_tile(avatar->first) };
+    const auto destination{ map::find_destination(grid(), start, target, options_with(gravity)) };
+    if (!destination) {
+        route.reason = map::describe(destination.error());
+        return route;
+    }
+    route.ok = true;
+    route.tiles.assign(destination->path.begin(), destination->path.end());
+    return route;
+}
+
+std::vector<int> MapHandler::reach_distances()
+{
+    const auto avatar{ me() };
+    if (!avatar || grid().empty()) {
+        return {};
+    }
+    return map::reach_distances(grid(), avatar->first, avatar->second);
+}
+
+std::vector<std::uint8_t> MapHandler::render_png(const map::RenderInput& input)
+{
+    if (!session_.in_world()) {
+        return {};
+    }
+    return map::render_png(world::World::instance(), grid(), input);
+}
+
+void MapHandler::set_module_view(std::string json)
+{
+    ++modules_rev_;
+    bridge_.publish_modules(std::move(json));
+}
+
+void MapHandler::set_pick(std::string label)
+{
+    pick_ = std::move(label);
+}
+
+MapHandler::Result MapHandler::plan_walk(const map::TilePos tile, const map::PathOptions& options)
 {
     Result result{ false, "walk", tile, {} };
 
@@ -319,7 +403,7 @@ MapHandler::Result MapHandler::plan_walk(const map::TilePos tile)
     const auto& walk_grid{ grid() };
     const glm::vec2 position{ me->position() };
     const map::TilePos start{ map::player_tile(position) };
-    const auto destination{ map::find_destination(walk_grid, start, tile, path_options_) };
+    const auto destination{ map::find_destination(walk_grid, start, tile, options) };
     if (!destination) {
         std::string why{ map::describe(destination.error()) };
         if (destination.error() == map::PathError::NoPath) {
@@ -356,6 +440,7 @@ MapHandler::Result MapHandler::plan_walk(const map::TilePos tile)
         was_walking && walk_->facing_left,
         now,
         now + step_interval_,
+        options,
     };
     last_target_ = destination->tile;
 
@@ -475,7 +560,8 @@ void MapHandler::check_path()
         }
 
         const auto target{ walk_->target };
-        if (const auto result{ walk_to(target) }; !result.ok) {
+        const auto options{ walk_->options };
+        if (const auto result{ plan_walk(target, options) }; (status_ = result.message, !result.ok)) {
             end_walk(fmt::format("The way to {}, {} got blocked.", target.x, target.y), true);
         }
         return;
@@ -546,6 +632,10 @@ void MapHandler::step_walk(const std::chrono::steady_clock::time_point now)
 void MapHandler::serve_window()
 {
     for (auto& request : bridge_.take_requests()) {
+        if (request.kind == map::Bridge::Request::Kind::Panel) {
+            request.reply.set_value(panel_hook_ ? panel_hook_(request.params) : std::string{ "{\"ok\":false,\"message\":\"No module answers this\"}" });
+            continue;
+        }
         const Result result{
             request.kind == map::Bridge::Request::Kind::Stop ? stop() : handle_click(request.click)
         };
@@ -573,6 +663,8 @@ void MapHandler::publish(const std::chrono::steady_clock::time_point now)
     view.tiles_revision = tiles_revision_;
     view.gravity = path_options_.gravity;
     view.status = status_;
+    view.modules_rev = modules_rev_;
+    view.pick = pick_;
     view.walk.target = last_target_;
     if (walk_) {
         view.walk.walking = true;

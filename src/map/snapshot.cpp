@@ -80,6 +80,8 @@ struct StateJson {
     PointJson target;
     bool gravity{ false };
     std::string status;
+    std::uint64_t modules_rev{ 0 };
+    std::string pick;
 };
 
 std::string hex(const std::uint32_t r, const std::uint32_t g, const std::uint32_t b)
@@ -183,6 +185,8 @@ std::string state_json(const StateView& view, const world::World& world)
     doc.walking = view.walk.walking;
     doc.gravity = view.gravity;
     doc.status = view.status;
+    doc.modules_rev = view.modules_rev;
+    doc.pick = view.pick;
 
     if (view.in_world) {
         for (const auto& [net_id, player] : world.get_players()) {

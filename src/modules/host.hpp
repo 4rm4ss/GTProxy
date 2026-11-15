@@ -91,6 +91,18 @@ public:
     using Fields = std::function<void(sol::table& event)>;
     Outcome emit(std::string_view event, const Fields& fields = {});
 
+    // One module's handlers of an event; what the first one returned: text,
+    // or { ok = , message = }.
+    struct Reply {
+        bool ran{ false };
+        bool ok{ true };
+        std::string message;
+    };
+    Reply emit_to(std::string_view module, std::string_view event, const Fields& fields = {});
+
+    // gtproxy.call from a module: another module's exported function.
+    sol::object call_export(sol::this_state state, const std::string& target, const std::string& name, const sol::variadic_args& args);
+
     // Map window clicks (API 1 kept the right click on its own).
     std::size_t right_click(map::TilePos tile, bool in_world);
 

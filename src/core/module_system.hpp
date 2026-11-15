@@ -72,13 +72,28 @@ public:
     bool game_call(const modules::CallOut& call) override;
     bool server_text(const std::string& text, bool game_message) override;
 
-    modules::WalkView walk_to(map::TilePos tile) override;
+    modules::WalkView walk_to(map::TilePos tile, std::optional<bool> gravity) override;
     modules::WalkView walk_stop() override;
     [[nodiscard]] bool walking() const override;
     [[nodiscard]] modules::WalkOptions walk_options() const override;
     modules::WalkOptions set_walk_options(const modules::WalkOptions& options) override;
     std::string save_setting(const std::string& module_id, const std::string& key, const modules::SettingValue& value) override;
     bool capture_wheel(const std::string& module_id, const std::string& mode) override;
+
+    [[nodiscard]] std::vector<modules::VendingInfo> vendings() const override;
+    [[nodiscard]] std::vector<modules::LockInfo> locks() const override;
+    [[nodiscard]] modules::WorldSummary world_summary() const override;
+    [[nodiscard]] std::vector<modules::TileHit> find_tiles(std::uint16_t item) const override;
+    [[nodiscard]] modules::RouteView route(map::TilePos tile, bool walk, std::optional<bool> gravity) override;
+    [[nodiscard]] std::vector<int> distances() override;
+    bool tile_action(map::TilePos tile, std::uint32_t item) override;
+    void set_overlay(const std::string& module_id, const std::string& id, const std::optional<modules::Overlay>& overlay) override;
+    void set_panel(const std::string& module_id, const std::string& id, const std::optional<std::string>& json) override;
+    void request_pick(const std::string& module_id, const std::string& label) override;
+    std::string render_png(std::string& error) override;
+
+    // The game server of config.json: modules keep data per server and world.
+    void set_server_name(std::string name) { server_name_ = std::move(name); }
 
 private:
     void cfg(const std::vector<std::string>& words);
@@ -99,6 +114,13 @@ private:
 
     // gtproxy-settings.txt of earlier versions -> data/drop.json
     void import_old_settings(const std::filesystem::path& app_dir) const;
+
+    // The modules' part of the map window.
+    void publish_module_view();
+    void forget_module_view(bool everything);
+    [[nodiscard]] std::string answer_panel(const std::map<std::string, std::string>& params);
+    // Server texts the game shows (OnConsoleMessage, OnTalkBubble ...).
+    void on_raw_client_packet(const event::Event& event);
 
     std::filesystem::path modules_dir_;
     std::filesystem::path data_dir_;
@@ -123,6 +145,34 @@ private:
     // Settings changed (cfg, profile, a module's page): the "settings"
     // event goes out from the main loop.
     bool settings_changed_{ false };
+
+    std::string server_name_;
+    std::map<std::string, modules::Overlay> overlays_;     // "<module>/<id>"
+    std::map<std::string, std::string> panels_;            // "<module>/<id>" -> JSON
+    std::string pick_owner_;
+
+    // What a packet changes, seen before the world handler applies it.
+    struct TileBefore {
+        int x{ 0 };
+        int y{ 0 };
+        std::uint16_t fg{ 0 };
+        std::uint16_t bg{ 0 };
+    };
+    std::optional<TileBefore> tile_before_;
+    struct ObjectBefore {
+        std::uint32_t id{ 0 };
+        std::uint16_t item{ 0 };
+        std::uint8_t amount{ 0 };
+        float x{ 0.0f };
+        float y{ 0.0f };
+    };
+    std::optional<ObjectBefore> object_before_;
+    struct PlayerBefore {
+        std::int32_t net_id{ -1 };
+        std::int32_t user_id{ 0 };
+        std::string name;
+    };
+    std::optional<PlayerBefore> player_before_;
 
     // The mouse wheel over the game, per module that asked for it.
     WheelHook wheel_;

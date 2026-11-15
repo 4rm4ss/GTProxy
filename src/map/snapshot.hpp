@@ -36,6 +36,8 @@ struct StateView {
     WalkView walk;
     bool gravity{ false };
     std::string status;                 // last result, shown in the window
+    std::uint64_t modules_rev{ 0 };     // the modules' tabs and overlays changed
+    std::string pick;                   // a module waits for a click on a tile: what for
 };
 
 // Players, dropped items and the current walk; sent several times a second.

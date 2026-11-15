@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <future>
+#include <map>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -139,6 +140,28 @@ void MapServer::setup_routes()
 
     server_.Post("/api/stop", [this](const httplib::Request&, httplib::Response& res) {
         answer(res, bridge_.submit(map::Bridge::Request::Kind::Stop));
+    });
+
+    // The modules' tabs and map overlays.
+    server_.Get("/api/modules", [this](const httplib::Request&, httplib::Response& res) {
+        no_cache(res);
+        res.set_content(*bridge_.modules(), JSON);
+    });
+
+    // A button or row of a module's tab: panel, action, row, value (+ fields).
+    server_.Post("/api/panel", [this](const httplib::Request& req, httplib::Response& res) {
+        std::map<std::string, std::string> params;
+        for (const auto& [key, value] : req.params) {
+            if (params.size() < 64 && key.size() <= 64 && value.size() <= 512) {
+                params.emplace(key, value);
+            }
+        }
+        if (!params.contains("panel") || !params.contains("action")) {
+            res.status = 400;
+            res.set_content("Expected panel and action", "text/plain");
+            return;
+        }
+        answer(res, bridge_.submit(map::Bridge::Request::Kind::Panel, {}, std::move(params)));
     });
 }
 }

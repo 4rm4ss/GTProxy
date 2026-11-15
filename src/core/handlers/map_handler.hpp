@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -17,6 +18,7 @@
 #include "../../map/movement.hpp"
 #include "../../map/pathfinder.hpp"
 #include "../../map/reachability.hpp"
+#include "../../map/render.hpp"
 #include "../../network/client.hpp"
 #include "../../network/server.hpp"
 #include "../../packet/packet_types.hpp"
@@ -117,8 +119,33 @@ public:
     // данных" (no world, items.dat or position yet). Only reports and logs
     // nothing: the reachability module decides what is shown and logged.
     [[nodiscard]] ReachReport check_reach(map::TilePos target);
-    // Walk to a tile (a block: to the free tile next to it).
-    Result walk_to(map::TilePos tile);
+    // Walk to a tile (a block: to the free tile next to it). gravity: only
+    // a way you could run and jump along (instead of the setting).
+    Result walk_to(map::TilePos tile, std::optional<bool> gravity = std::nullopt);
+
+    // Ways without walking. reach_route: the reachability check's way (4
+    // neighbours, your body fits, never between two corners); walk_route:
+    // the way a walk would take (gravity as for walk_to).
+    struct Route {
+        bool ok{ false };
+        std::vector<map::TilePos> tiles;    // from your tile to the target
+        std::string reason;                 // why there is none
+    };
+    [[nodiscard]] Route reach_route(map::TilePos target);
+    [[nodiscard]] Route walk_route(map::TilePos target, std::optional<bool> gravity);
+    // Steps from your tile to every tile (row by row), -1 where there is no
+    // way; empty while the world or your position is unknown.
+    [[nodiscard]] std::vector<int> reach_distances();
+    // The map as a PNG (map/render.hpp), with the modules' marks.
+    [[nodiscard]] std::vector<std::uint8_t> render_png(const map::RenderInput& input);
+
+    // The modules' part of the map window (tabs, overlays: JSON) and a module
+    // waiting for a click on a tile ("" none).
+    void set_module_view(std::string json);
+    void set_pick(std::string label);
+    // Buttons and rows of the modules' tabs; returns the answer (JSON).
+    using PanelHook = std::function<std::string(const std::map<std::string, std::string>& params)>;
+    void set_panel_hook(PanelHook hook) { panel_hook_ = std::move(hook); }
     // What is on a tile.
     [[nodiscard]] Result inspect(map::TilePos tile) const;
     Result stop();
@@ -147,9 +174,13 @@ private:
         bool facing_left{ false };
         std::chrono::steady_clock::time_point last_step;
         std::chrono::steady_clock::time_point next_step;
+        map::PathOptions options;
     };
 
-    [[nodiscard]] Result plan_walk(map::TilePos tile);
+    [[nodiscard]] Result plan_walk(map::TilePos tile, const map::PathOptions& options);
+    [[nodiscard]] map::PathOptions options_with(std::optional<bool> gravity) const;
+    // Your avatar's position and body, when known.
+    [[nodiscard]] std::optional<std::pair<glm::vec2, map::Body>> me() const;
     [[nodiscard]] Result module_click(map::MouseButton button, map::TilePos tile);
     void log_settings() const;
     [[nodiscard]] const map::Grid& grid();
@@ -191,6 +222,9 @@ private:
     std::optional<packet::GameUpdatePacket> model_;
     ClickHook click_hook_;
     WalkEndHook walk_end_hook_;
+    PanelHook panel_hook_;
+    std::uint64_t modules_rev_{ 0 };
+    std::string pick_;
     std::string status_;
     std::chrono::steady_clock::time_point next_publish_{};
 };

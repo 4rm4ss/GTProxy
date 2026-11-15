@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <optional>
+#include <vector>
 #include <string_view>
 
 #include <glm/glm.hpp>
@@ -67,4 +68,12 @@ struct ReachResult {
     const Body& body,
     TilePos target
 );
+
+// The same search from where you stand to every tile: steps to each tile
+// (row by row), -1 where there is no way. Closed doors are not entered.
+[[nodiscard]] std::vector<int> reach_distances(const Grid& grid, glm::vec2 position, const Body& body);
+
+// The shortest way itself, from your tile to the target; empty when there is
+// none (or the target is blocked / outside the world).
+[[nodiscard]] std::vector<TilePos> reach_path(const Grid& grid, glm::vec2 position, const Body& body, TilePos target);
 }

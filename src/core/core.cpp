@@ -109,6 +109,7 @@ Core::Core()
         *map_handler_,
         *command_handler_
     );
+    module_system_->set_server_name(config_.get_server_config().address);
 
     console_ = std::make_unique<ConsoleInput>();
     spdlog::info("Proxy console: type 'help' here for its commands (cfg list / cfg exec <profile> / cfg reload ...)");

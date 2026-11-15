@@ -3,7 +3,7 @@
 #include <utility>
 
 namespace map {
-std::optional<std::future<std::string>> Bridge::submit(const Request::Kind kind, const Click& click)
+std::optional<std::future<std::string>> Bridge::submit(const Request::Kind kind, const Click& click, std::map<std::string, std::string> params)
 {
     std::lock_guard lock{ mutex_ };
     if (requests_.size() >= MAX_PENDING) {
@@ -13,6 +13,7 @@ std::optional<std::future<std::string>> Bridge::submit(const Request::Kind kind,
     Request& request{ requests_.emplace_back() };
     request.kind = kind;
     request.click = click;
+    request.params = std::move(params);
     return request.reply.get_future();
 }
 
@@ -26,6 +27,19 @@ std::shared_ptr<const std::string> Bridge::tiles() const
 {
     std::lock_guard lock{ mutex_ };
     return tiles_;
+}
+
+std::shared_ptr<const std::string> Bridge::modules() const
+{
+    std::lock_guard lock{ mutex_ };
+    return modules_;
+}
+
+void Bridge::publish_modules(std::string json)
+{
+    auto shared{ std::make_shared<const std::string>(std::move(json)) };
+    std::lock_guard lock{ mutex_ };
+    modules_ = std::move(shared);
 }
 
 void Bridge::mark_viewed()

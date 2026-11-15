@@ -64,6 +64,32 @@ button.active { border-color: var(--accent); color: var(--accent); }
 #help.show { display: block; }
 #help b { color: var(--text); }
 #help .sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -2px; margin-right: 6px; }
+#side { position: fixed; top: 44px; right: 0; bottom: 0; width: min(460px, 100%); background: var(--panel);
+  border-left: 1px solid var(--line); display: none; flex-direction: column; z-index: 3; }
+#side.show { display: flex; }
+#tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-bottom: 1px solid var(--line); }
+#tabs button.active { border-color: var(--accent); color: var(--accent); }
+#pane { flex: 1; overflow: auto; padding: 8px 10px 16px; }
+#pane h3 { margin: 2px 0 6px; font-size: 14px; }
+#pane .note { color: var(--muted); margin: 4px 0 8px; white-space: pre-wrap; }
+#pane .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; align-items: center; }
+#pane input { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 8px; min-width: 0; }
+#pane label { color: var(--muted); }
+#pane table { width: 100%; border-collapse: collapse; margin-top: 6px; font-variant-numeric: tabular-nums; }
+#pane th { position: sticky; top: -8px; background: var(--panel); text-align: left; color: var(--muted); font-weight: 500;
+  border-bottom: 1px solid var(--line); padding: 4px 4px; cursor: pointer; white-space: nowrap; }
+#pane td { border-bottom: 1px solid #222936; padding: 4px 4px; vertical-align: top; }
+#pane tr.click { cursor: pointer; }
+#pane tr.click:hover td { background: var(--panel-2); }
+#pane tr.ok td:first-child { box-shadow: inset 3px 0 var(--ok); }
+#pane tr.bad td { color: #c98b8b; }
+#pane tr.muted td { color: var(--muted); }
+#pane tr.selected td { background: #26303f; }
+#pane td button { padding: 2px 7px; }
+#pick { position: fixed; left: 50%; top: 52px; transform: translateX(-50%); background: #3a2f12; color: var(--accent);
+  border: 1px solid #6b5420; border-radius: 6px; padding: 5px 12px; display: none; z-index: 4; }
+#pick.show { display: block; }
 @media (max-width: 720px) { .wide { display: none; } }
 </style>
 </head>
@@ -77,8 +103,11 @@ button.active { border-color: var(--accent); color: var(--accent); }
   <button id="center" title="Center on you (C)">Me</button>
   <button id="follow" title="Keep you in view (F)">Follow</button>
   <button id="stop" title="Stop walking (Esc)">Stop</button>
+  <button id="panelsbtn" title="The modules' tabs (vending, items, scan, host, players)">Modules</button>
   <button id="helpbtn" title="Help">?</button>
 </div>
+<div id="pick"></div>
+<div id="side"><div id="tabs"></div><div id="pane"></div></div>
 <canvas id="map"></canvas>
 <div id="empty"><div><b>No world yet</b>Enter a world in the game - it appears here.</div></div>
 <div id="toast"></div>
@@ -230,6 +259,7 @@ function draw() {
     for (let k = 1; k < path.length; k++) { const s = worldToScreen(path[k].x * TILE + 16, path[k].y * TILE + 16); ctx.lineTo(s.x, s.y); }
     ctx.stroke(); ctx.setLineDash([]);
   }
+  drawOverlays(ts);
   const target = state.has_target ? state.target : null;
   if (target) ring(target, state.walking ? "#4fc3ff" : "rgba(79,195,255,0.45)");
   if (marker && performance.now() - marker.at < marker.hold) {
@@ -347,6 +377,7 @@ canvas.addEventListener("contextmenu", e => { e.preventDefault(); sendClick(e.of
 canvas.addEventListener("mouseleave", () => { if (hover) { hover = null; dirty = true; showHover(); } });
 canvas.addEventListener("wheel", e => { e.preventDefault(); zoomAt(e.offsetX, e.offsetY, Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 window.addEventListener("keydown", e => {
+  if (e.target && e.target.tagName === "INPUT") return;   // typing in a module's tab
   if (e.key === "c" || e.key === "C") centerOnMe();
   else if (e.key === "f" || e.key === "F") { follow = !follow; updateButtons(); }
   else if (e.key === "Escape") stopWalk();
@@ -372,6 +403,148 @@ function updateButtons() { $("follow").classList.toggle("active", follow); }
 </script>
 )GTPROXY" };
 
+constexpr std::string_view PAGE_SCRIPT_PANELS{ R"GTPROXY(<script>
+"use strict";
+// The modules' part of the window: tabs (tables, search, buttons, fields)
+// and what they draw on the map (markers, a route, areas).
+let modulesRev = -1, modules = { panels: [], overlays: [] }, activeTab = "", sortBy = {}, flash = null;
+async function loadModules(rev) {
+  try {
+    modules = await (await fetch("/api/modules", { cache: "no-store" })).json();
+    modulesRev = rev;
+    renderTabs();
+    dirty = true;
+  } catch (e) { }
+}
+function el(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "onclick") e.onclick = v; else if (k === "class") e.className = v; else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k !== null && k !== undefined) e.append(k);
+  return e;
+}
+function panelFields() {
+  const out = {};
+  for (const input of $("pane").querySelectorAll("input[data-field]")) out["f_" + input.dataset.field] = input.type === "checkbox" ? (input.checked ? "1" : "0") : input.value;
+  return out;
+}
+async function panelAction(key, action, row, value) {
+  try {
+    const res = await post("/api/panel", Object.assign({ panel: key, action, row: row || "", value: value || "" }, panelFields()));
+    if (res.message) toast(res.message, res.ok);
+    poll(true);
+  } catch (e) { toast("The proxy did not answer: " + e.message, false); }
+}
+function renderTabs() {
+  const tabs = $("tabs");
+  tabs.textContent = "";
+  const panels = modules.panels || [];
+  if (!panels.some(p => p.key === activeTab)) activeTab = panels.length ? panels[0].key : "";
+  for (const p of panels) {
+    const b = el("button", { class: p.key === activeTab ? "active" : "", onclick: () => { activeTab = p.key; renderTabs(); } }, (p.spec && p.spec.title) || p.key);
+    tabs.append(b);
+  }
+  renderPane();
+}
+function renderPane() {
+  const pane = $("pane");
+  const focus = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.field : null;
+  const keep = {};
+  for (const input of pane.querySelectorAll("input[data-field]")) keep[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
+  pane.textContent = "";
+  const panel = (modules.panels || []).find(p => p.key === activeTab);
+  if (!panel) { pane.append(el("div", { class: "note" }, "No module tabs. They come from modules/ (vend_finder, item_finder, world_scan, autohost, world_moderation).")); return; }
+  const spec = panel.spec || {}, key = panel.key;
+  pane.append(el("h3", {}, spec.title || key));
+  if (spec.note) pane.append(el("div", { class: "note" }, spec.note));
+  if (spec.search) {
+    const input = el("input", { "data-field": "search", placeholder: spec.search.placeholder || "Search", value: spec.search.value || "" });
+    input.style.flex = "1";
+    input.addEventListener("keydown", e => { if (e.key === "Enter") panelAction(key, "search", "", input.value); });
+    pane.append(el("div", { class: "row" }, input, el("button", { onclick: () => panelAction(key, "search", "", input.value) }, "Search")));
+  }
+  for (const f of spec.inputs || []) {
+    const input = el("input", { "data-field": f.id, value: f.value ?? "", type: f.type === "check" ? "checkbox" : "text" });
+    if (f.type === "check" && (f.value === true || f.value === "1")) input.checked = true;
+    if (f.size) input.size = f.size;
+    pane.append(el("div", { class: "row" }, el("label", {}, f.label || f.id), input));
+  }
+  if ((spec.buttons || []).length) {
+    const row = el("div", { class: "row" });
+    for (const b of spec.buttons) row.append(el("button", { onclick: () => panelAction(key, b.id, b.row || "", b.value || "") }, b.label || b.id));
+    pane.append(row);
+  }
+  const rows = (spec.rows || []).slice();
+  if ((spec.columns || []).length) {
+    const sort = sortBy[key];
+    if (sort) rows.sort((a, b) => {
+      const x = (a.sort || a.cells || [])[sort.col], y = (b.sort || b.cells || [])[sort.col];
+      const nx = typeof x === "number" ? x : parseFloat(x), ny = typeof y === "number" ? y : parseFloat(y);
+      const r = !isNaN(nx) && !isNaN(ny) ? nx - ny : String(x ?? "").localeCompare(String(y ?? ""));
+      return sort.desc ? -r : r;
+    });
+    const head = el("tr", {});
+    spec.columns.forEach((c, i) => head.append(el("th", { onclick: () => { const s = sortBy[key]; sortBy[key] = { col: i, desc: s && s.col === i ? !s.desc : false }; renderPane(); } }, c + (sort && sort.col === i ? (sort.desc ? " v" : " ^") : ""))));
+    if (rows.some(r => (r.actions || []).length)) head.append(el("th", {}, ""));
+    const table = el("table", {}, head);
+    for (const r of rows) {
+      const tr = el("tr", { class: [r.style || "", r.tile || r.select ? "click" : "", r.selected ? "selected" : ""].join(" ") });
+      for (const c of r.cells || []) tr.append(el("td", {}, String(c ?? "")));
+      if (rows.some(x => (x.actions || []).length)) {
+        const td = el("td", {});
+        for (const a of r.actions || []) td.append(el("button", { onclick: ev => { ev.stopPropagation(); panelAction(key, a.id || a, r.id, a.value || ""); } }, a.label || a.id || a));
+        tr.append(td);
+      }
+      tr.onclick = () => {
+        if (r.tile) { centerOn(r.tile.x * TILE + 16, r.tile.y * TILE + 16); flash = { x: r.tile.x, y: r.tile.y, at: performance.now() }; follow = false; updateButtons(); dirty = true; }
+        panelAction(key, "select", r.id);
+      };
+      table.append(tr);
+    }
+    pane.append(table);
+    if (!rows.length && spec.empty) pane.append(el("div", { class: "note" }, spec.empty));
+  }
+  for (const input of pane.querySelectorAll("input[data-field]")) {
+    const f = input.dataset.field;
+    if (f in keep && f !== "search") { if (input.type === "checkbox") input.checked = keep[f]; else input.value = keep[f]; }
+    if (f === focus) input.focus();
+  }
+}
+function drawOverlays(ts) {
+  for (const o of modules.overlays || []) {
+    for (const a of o.areas || []) {
+      const s = worldToScreen(Math.min(a.x1, a.x2) * TILE, Math.min(a.y1, a.y2) * TILE);
+      const w = (Math.abs(a.x2 - a.x1) + 1) * ts, h = (Math.abs(a.y2 - a.y1) + 1) * ts;
+      ctx.fillStyle = (a.color || "#4fc3ff") + "22"; ctx.fillRect(s.x, s.y, w, h);
+      ctx.strokeStyle = a.color || "#4fc3ff"; ctx.lineWidth = 2; ctx.setLineDash([6, 4]); ctx.strokeRect(s.x + 1, s.y + 1, w - 2, h - 2); ctx.setLineDash([]);
+      if (a.label) label(a.label, s.x + 4, s.y + 14, a.color || "#4fc3ff", "left");
+    }
+    const route = o.route || [];
+    if (route.length > 1) {
+      ctx.strokeStyle = o.route_color || "#c77dff"; ctx.lineWidth = Math.max(2, ts / 8);
+      ctx.beginPath();
+      route.forEach((t, k) => { const s = worldToScreen(t[0] * TILE + 16, t[1] * TILE + 16); if (k) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); });
+      ctx.stroke();
+    }
+    for (const m of o.markers || []) {
+      ring(m, m.color || "#ffcf4a");
+      const s = worldToScreen(m.x * TILE, m.y * TILE);
+      ctx.strokeStyle = m.color || "#ffcf4a"; ctx.lineWidth = 2; ctx.strokeRect(s.x + 1, s.y + 1, ts - 2, ts - 2);
+      if (m.label) label(m.label, s.x + ts / 2, s.y - 4, m.color || "#ffcf4a", "center");
+    }
+  }
+  if (flash && performance.now() - flash.at < 2500) { ring(flash, "#ffffff"); dirty = true; }
+}
+function label(text, x, y, color, align) {
+  ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = align; ctx.textBaseline = "bottom";
+  ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.strokeText(text, x, y);
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
+}
+$("panelsbtn").onclick = () => { $("side").classList.toggle("show"); $("panelsbtn").classList.toggle("active", $("side").classList.contains("show")); };
+</script>
+)GTPROXY" };
+
 constexpr std::string_view PAGE_SCRIPT_4{ R"GTPROXY(<script>
 "use strict";
 let polling = false, pollTimer = 0;
@@ -393,6 +566,9 @@ async function poll(now) {
     online = true;
     state = s;
     if (s.tiles_rev !== tiles.rev) await loadTiles();
+    if (s.modules_rev !== modulesRev) await loadModules(s.modules_rev);
+    $("pick").textContent = s.pick ? "Click a tile on the map: " + s.pick : "";
+    $("pick").classList.toggle("show", !!s.pick);
     if (!centered && tiles.width && W) { centerOnMe(); centered = !!me(); }
     if (follow) centerOnMe();
   } catch (e) { online = false; }
@@ -422,7 +598,7 @@ const std::string& page_html()
 {
     static const std::string page{ [] {
         std::string html;
-        for (const auto part : std::array{ PAGE_HEAD, PAGE_SCRIPT_1, PAGE_SCRIPT_2, PAGE_SCRIPT_3, PAGE_SCRIPT_4 }) {
+        for (const auto part : std::array{ PAGE_HEAD, PAGE_SCRIPT_1, PAGE_SCRIPT_2, PAGE_SCRIPT_3, PAGE_SCRIPT_PANELS, PAGE_SCRIPT_4 }) {
             html += part;
         }
         return html;

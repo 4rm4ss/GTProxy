@@ -79,7 +79,7 @@ gtproxy.command("reach", "check a tile", function(args, ctx)
     ctx.reply(ctx.source .. " " .. r.message)
 end)
 assert(dofile == nil and loadfile == nil, "no file access")
-assert(gtproxy.api_version == 2)
+assert(gtproxy.api_version == 3)
 assert(gtproxy.module.id == "reach")
 assert(gtproxy.world.info().me.tile_x == 5)
 )" };

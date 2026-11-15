@@ -51,6 +51,8 @@ struct ModuleHost::Loaded {
     int next_timer{ 1 };
     std::vector<Section> sections;
     std::map<std::string, sol::object> files;
+    // gtproxy.export: what other modules may call (gtproxy.call).
+    std::map<std::string, sol::protected_function> exports;
 };
 
 namespace {
@@ -67,6 +69,12 @@ constexpr std::array EVENTS{
     std::string_view{ "walk_end" },
     std::string_view{ "settings" },
     std::string_view{ "wheel" },
+    std::string_view{ "tile" },
+    std::string_view{ "player_join" },
+    std::string_view{ "player_leave" },
+    std::string_view{ "console" },
+    std::string_view{ "pick" },
+    std::string_view{ "panel" },
 };
 
 constexpr std::array CALLS{
@@ -113,6 +121,76 @@ function Dialog:finish(name, ok)
     return table.concat(self)
 end
 function gtproxy.dialog() return setmetatable({}, Dialog) end
+
+-- A dialog the server sent (OnDialogRequest markup), read like the game.
+gtproxy.ui = {}
+local function split(text, sep)
+    local parts, start = {}, 1
+    while true do
+        local at = string.find(text, sep, start, true)
+        if not at then parts[#parts + 1] = string.sub(text, start); return parts end
+        parts[#parts + 1] = string.sub(text, start, at - 1)
+        start = at + 1
+    end
+end
+gtproxy.ui.split = split
+function gtproxy.ui.parse_dialog(markup)
+    local d = { name = "", embed = {}, embed_list = {}, inputs = {}, input_list = {}, checkboxes = {},
+        checkbox_list = {}, buttons = {}, button_list = {}, texts = {}, icons = {}, pickers = {} }
+    for line in (markup .. "\n"):gmatch("(.-)\n") do
+        local p = split(line, "|")
+        local key = p[1]
+        if key == "end_dialog" then d.name = p[2] or ""
+        elseif key == "embed_data" and p[2] then
+            d.embed[p[2]] = p[3] or ""
+            d.embed_list[#d.embed_list + 1] = { p[2], p[3] or "" }
+        elseif key == "add_text_input" and p[2] then
+            d.inputs[p[2]] = p[4] or ""
+            d.input_list[#d.input_list + 1] = p[2]
+            d.texts[#d.texts + 1] = p[3] or ""
+        elseif key == "add_checkbox" and p[2] then
+            d.checkboxes[p[2]] = p[4] == "1"
+            d.checkbox_list[#d.checkbox_list + 1] = p[2]
+            d.texts[#d.texts + 1] = p[3] or ""
+        elseif key == "add_button" and p[2] then
+            d.buttons[p[2]] = p[3] or ""
+            d.button_list[#d.button_list + 1] = p[2]
+        elseif key == "add_player_picker" and p[2] then
+            d.pickers[#d.pickers + 1] = p[2]
+        elseif key == "add_label_with_icon" or key == "add_label" or key == "add_textbox" or key == "add_smalltext" then
+            local text = key == "add_label_with_icon" and p[3] or p[2]
+            if key == "add_label" then text = p[3] or p[2] end
+            d.texts[#d.texts + 1] = text or ""
+            if key == "add_label_with_icon" then d.icons[#d.icons + 1] = tonumber(p[5] or "") end
+        end
+    end
+    d.text = gtproxy.text.strip_colors(table.concat(d.texts, "\n"))
+    return d
+end
+-- The game's answer to such a dialog: its embedded data, its inputs (values
+-- given here, else as the dialog had them) and the button pressed (nil: OK).
+function gtproxy.ui.answer(d, values, button)
+    values = values or {}
+    local lines = { "action|dialog_return", "dialog_name|" .. d.name }
+    for _, e in ipairs(d.embed_list) do lines[#lines + 1] = e[1] .. "|" .. e[2] .. "|" end
+    for _, name in ipairs(d.input_list) do
+        local v = values[name]
+        if v == nil then v = d.inputs[name] end
+        lines[#lines + 1] = name .. "|" .. gtproxy.text.sanitize(tostring(v))
+    end
+    for _, name in ipairs(d.checkbox_list) do
+        local v = values[name]
+        if v == nil then v = d.checkboxes[name] end
+        lines[#lines + 1] = name .. "|" .. ((v == true or v == "1" or v == 1) and "1" or "0")
+    end
+    for name, v in pairs(values) do
+        if d.inputs[name] == nil and d.checkboxes[name] == nil and d.embed[name] == nil then
+            lines[#lines + 1] = name .. "|" .. gtproxy.text.sanitize(tostring(v))
+        end
+    end
+    if button then lines[#lines + 1] = "buttonClicked|" .. button end
+    return table.concat(lines, "\n") .. "\n"
+end
 )LUA" };
 
 // Stops a module whose Lua code runs too long (an endless loop would
@@ -271,17 +349,186 @@ sol::object setting_object(lua_State* lua, const SettingValue& value)
 
 void save_store(ModuleHost::Loaded& module);
 
-// The `gtproxy` table: everything a module can use (API version 2).
+void json_text(std::string& out, const std::string_view text)
+{
+    out += '"';
+    for (const char c : text) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                out += fmt::format("\\u{:04x}", static_cast<unsigned>(c));
+            }
+            else {
+                out += c;
+            }
+        }
+    }
+    out += '"';
+}
+
+// A Lua value as JSON: tables with keys 1..n are arrays, other tables
+// objects; functions and the like become null.
+void to_json(std::string& out, const sol::object& value, const int depth)
+{
+    if (depth > 16) {
+        out += "null";
+        return;
+    }
+    switch (value.get_type()) {
+    case sol::type::boolean:
+        out += value.as<bool>() ? "true" : "false";
+        return;
+    case sol::type::number: {
+        const double number{ value.as<double>() };
+        if (!std::isfinite(number)) {
+            out += "null";
+        }
+        else if (number == std::floor(number) && std::abs(number) < 9.0e15) {
+            out += fmt::format("{}", static_cast<long long>(number));
+        }
+        else {
+            out += fmt::format("{}", number);
+        }
+        return;
+    }
+    case sol::type::string:
+        json_text(out, value.as<std::string>());
+        return;
+    case sol::type::table: {
+        const auto table{ value.as<sol::table>() };
+        const std::size_t length{ table.size() };
+        std::size_t entries{ 0 };
+        for (const auto& entry : table) {
+            std::ignore = entry;
+            ++entries;
+        }
+        if (length > 0 && entries == length) {
+            out += '[';
+            for (std::size_t i{ 1 }; i <= length; ++i) {
+                if (i > 1) {
+                    out += ',';
+                }
+                to_json(out, table[i], depth + 1);
+            }
+            out += ']';
+            return;
+        }
+        out += '{';
+        bool first{ true };
+        for (const auto& [key, item] : table) {
+            if (key.get_type() != sol::type::string && key.get_type() != sol::type::number) {
+                continue;
+            }
+            if (!first) {
+                out += ',';
+            }
+            first = false;
+            json_text(out, key.get_type() == sol::type::string ? key.as<std::string>() : as_text(key));
+            out += ':';
+            to_json(out, item, depth + 1);
+        }
+        out += '}';
+        return;
+    }
+    default:
+        out += "null";
+        return;
+    }
+}
+
+// A value of one module's Lua state rebuilt in another's (true/false,
+// numbers, text and tables of them; anything else becomes nil).
+sol::object copy_value(const sol::object& value, sol::state_view to, const int depth)
+{
+    switch (value.get_type()) {
+    case sol::type::boolean:
+        return sol::make_object(to, value.as<bool>());
+    case sol::type::number:
+        if (value.is<lua_Integer>()) {
+            return sol::make_object(to, value.as<lua_Integer>());
+        }
+        return sol::make_object(to, value.as<double>());
+    case sol::type::string:
+        return sol::make_object(to, value.as<std::string>());
+    case sol::type::table: {
+        if (depth > 16) {
+            return sol::make_object(to, sol::lua_nil);
+        }
+        sol::table copy{ to.create_table() };
+        for (const auto& [key, item] : value.as<sol::table>()) {
+            const auto copied_key{ copy_value(key, to, depth + 1) };
+            if (copied_key.get_type() != sol::type::lua_nil) {
+                copy[copied_key] = copy_value(item, to, depth + 1);
+            }
+        }
+        return sol::make_object(to, copy);
+    }
+    default:
+        return sol::make_object(to, sol::lua_nil);
+    }
+}
+
+std::optional<Overlay> overlay_from(const sol::object& value)
+{
+    if (value.get_type() != sol::type::table) {
+        return std::nullopt;
+    }
+    const auto spec{ value.as<sol::table>() };
+    Overlay overlay{};
+    const auto tile_of = [](const sol::table& t) { return map::TilePos{ static_cast<int>(t.get_or("x", 0.0)), static_cast<int>(t.get_or("y", 0.0)) }; };
+    if (const sol::object markers{ spec["markers"] }; markers.get_type() == sol::type::table) {
+        for (const auto& [index, item] : markers.as<sol::table>()) {
+            if (item.get_type() == sol::type::table) {
+                const auto t{ item.as<sol::table>() };
+                const auto at{ tile_of(t) };
+                overlay.markers.push_back({ at.x, at.y, t.get_or<std::string>("label", ""), t.get_or<std::string>("color", "#ffcf4a") });
+            }
+        }
+    }
+    if (const sol::object route{ spec["route"] }; route.get_type() == sol::type::table) {
+        const auto t{ route.as<sol::table>() };
+        for (std::size_t i{ 1 }; i <= t.size(); ++i) {
+            const sol::object point{ t[i] };
+            if (point.get_type() == sol::type::table) {
+                overlay.route.push_back(tile_of(point.as<sol::table>()));
+            }
+        }
+    }
+    overlay.route_color = spec.get_or<std::string>("route_color", "#c77dff");
+    if (const sol::object areas{ spec["areas"] }; areas.get_type() == sol::type::table) {
+        for (const auto& [index, item] : areas.as<sol::table>()) {
+            if (item.get_type() == sol::type::table) {
+                const auto t{ item.as<sol::table>() };
+                overlay.areas.push_back({
+                    static_cast<int>(t.get_or("x1", 0.0)), static_cast<int>(t.get_or("y1", 0.0)),
+                    static_cast<int>(t.get_or("x2", 0.0)), static_cast<int>(t.get_or("y2", 0.0)),
+                    t.get_or<std::string>("label", ""), t.get_or<std::string>("color", "#4fc3ff"),
+                });
+            }
+        }
+    }
+    return overlay;
+}
+
+// The `gtproxy` table: everything a module can use (API version 3).
 //
 // Every function handed to Lua captures plain pointers only: sol2 frees
 // captured objects with destructors (std::string ...) at the wrong place
 // when the Lua state closes.
 class ModuleApi final : public scripting::IBindingModule {
 public:
-    ModuleApi(ModuleHost::Loaded& module, Services& services, std::function<bool(std::string_view)> name_taken)
-        : module_{ module }
+    using Caller = std::function<sol::object(sol::this_state state, const std::string& target, const std::string& name, const sol::variadic_args& args)>;
+
+    ModuleApi(ModuleHost::Loaded& module, Services& services, std::function<bool(std::string_view)> name_taken, Caller caller)
+        : name_taken_{ std::move(name_taken) }
+        , caller_{ std::move(caller) }
+        , module_{ module }
         , services_{ services }
-        , name_taken_{ std::move(name_taken) }
     { }
 
     [[nodiscard]] std::string_view name() const override { return "gtproxy module API"; }
@@ -316,12 +563,14 @@ public:
         bind_world(lua, api, services);
         bind_game(lua, api, module, services);
         bind_runtime(lua, api, module);
+        bind_map(lua, api, module, services, self);
 
         const Watchdog watchdog{ lua.lua_state() };
         lua.safe_script(PRELUDE, "@gtproxy prelude");
     }
 
     std::function<bool(std::string_view)> name_taken_;
+    Caller caller_;
 
 private:
     // API 1: events, commands, settings, reachability, map window, log.
@@ -473,6 +722,8 @@ private:
             info["height"] = view.height;
             info["net_id"] = view.net_id;
             info["real_name"] = view.real_name;
+            info["server"] = view.server;
+            info["user_id"] = view.user_id;
             if (view.me) {
                 info["me"] = view_lua.create_table_with(
                     "x", view.me->x,
@@ -527,13 +778,76 @@ private:
                 return sol::make_object(state, sol::lua_nil);
             }
             sol::state_view view_lua{ state };
-            return sol::make_object(state, view_lua.create_table_with(
+            sol::table info{ view_lua.create_table_with(
                 "fg", tile->foreground,
                 "bg", tile->background,
                 "flags", tile->flags,
                 "cell", tile->cell,
-                "text", tile->text
-            ));
+                "text", tile->text,
+                "extra", tile->extra,
+                "label", tile->label
+            ) };
+            if (tile->extra == "vending") {
+                info["vend_item"] = tile->vend_item;
+                info["vend_price"] = tile->vend_price;
+            }
+            if (tile->extra == "lock") {
+                info["lock_owner"] = tile->lock_owner;
+                info["lock_access"] = sol::as_table(tile->lock_access);
+            }
+            return sol::make_object(state, info);
+        });
+
+        world.set_function("vendings", [services](sol::this_state state) {
+            sol::state_view view_lua{ state };
+            sol::table list{ view_lua.create_table() };
+            std::size_t i{ 0 };
+            for (const auto& vending : services->vendings()) {
+                list[++i] = view_lua.create_table_with(
+                    "x", vending.x, "y", vending.y, "machine", vending.machine, "item", vending.item, "price", vending.price
+                );
+            }
+            return list;
+        });
+
+        world.set_function("locks", [services](sol::this_state state) {
+            sol::state_view view_lua{ state };
+            sol::table list{ view_lua.create_table() };
+            std::size_t i{ 0 };
+            for (const auto& lock : services->locks()) {
+                sol::table access{ view_lua.create_table() };
+                for (std::size_t k{ 0 }; k < lock.access.size(); ++k) {
+                    access[k + 1] = lock.access[k];
+                }
+                list[++i] = view_lua.create_table_with(
+                    "x", lock.x, "y", lock.y, "item", lock.item, "owner", lock.owner, "access", access, "world", lock.world
+                );
+            }
+            return list;
+        });
+
+        world.set_function("summary", [services](sol::this_state state) {
+            sol::state_view view_lua{ state };
+            const auto summary{ services->world_summary() };
+            sol::table foreground{ view_lua.create_table() };
+            sol::table background{ view_lua.create_table() };
+            for (const auto& [id, count] : summary.foreground) {
+                foreground[id] = count;
+            }
+            for (const auto& [id, count] : summary.background) {
+                background[id] = count;
+            }
+            return view_lua.create_table_with("foreground", foreground, "background", background);
+        });
+
+        world.set_function("find_tiles", [services](sol::this_state state, const double id) {
+            sol::state_view view_lua{ state };
+            sol::table list{ view_lua.create_table() };
+            std::size_t i{ 0 };
+            for (const auto& hit : services->find_tiles(static_cast<std::uint16_t>(whole_number(id, "gtproxy.world.find_tiles: id")))) {
+                list[++i] = view_lua.create_table_with("x", hit.x, "y", hit.y, "background", hit.background);
+            }
+            return list;
         });
         api["world"] = world;
 
@@ -613,6 +927,14 @@ private:
         sol::table server{ lua.create_table() };
         server.set_function("text", [services](const std::string& text) { return services->server_text(text, false); });
         server.set_function("game_text", [services](const std::string& text) { return services->server_text(text, true); });
+        server.set_function("tile_action", [services](const double x, const double y, const double item) {
+            return services->tile_action({ whole_number(x, "gtproxy.server.tile_action: x"), whole_number(y, "gtproxy.server.tile_action: y") },
+                static_cast<std::uint32_t>(whole_number(item, "gtproxy.server.tile_action: item")));
+        });
+        // The wrench on a tile: what the game sends to open a machine's or a lock's dialog.
+        server.set_function("wrench", [services](const double x, const double y) {
+            return services->tile_action({ whole_number(x, "gtproxy.server.wrench: x"), whole_number(y, "gtproxy.server.wrench: y") }, 32);
+        });
         api["server"] = server;
 
         const auto walk_table = [](sol::state_view view_lua, const WalkView& walk) {
@@ -624,8 +946,15 @@ private:
             return table;
         };
         sol::table walk{ lua.create_table() };
-        walk.set_function("to", [services, walk_table](sol::this_state state, const double x, const double y) {
-            return walk_table(state, services->walk_to({ whole_number(x, "gtproxy.walk.to: x"), whole_number(y, "gtproxy.walk.to: y") }));
+        walk.set_function("to", [services, walk_table](sol::this_state state, const double x, const double y, const sol::object& options) {
+            std::optional<bool> gravity;
+            if (options.get_type() == sol::type::table) {
+                const sol::object value{ options.as<sol::table>()["gravity"] };
+                if (value.get_type() == sol::type::boolean) {
+                    gravity = value.as<bool>();
+                }
+            }
+            return walk_table(state, services->walk_to({ whole_number(x, "gtproxy.walk.to: x"), whole_number(y, "gtproxy.walk.to: y") }, gravity));
         });
         walk.set_function("stop", [services, walk_table](sol::this_state state) { return walk_table(state, services->walk_stop()); });
         walk.set_function("active", [services] { return services->walking(); });
@@ -690,6 +1019,101 @@ private:
             module->sections.push_back(std::move(section));
         });
         api["menu"] = menu;
+    }
+
+    // API 3: the map window (overlays, tabs, picking a tile, PNG), ways,
+    // and calls between modules.
+    static void bind_map(sol::state& lua, sol::table& api, ModuleHost::Loaded* module, Services* services, ModuleApi* self)
+    {
+        sol::table map{ lua.create_table() };
+        // gtproxy.map.overlay(id, { markers = {{x,y,label,color}}, route = {{x,y}...}, areas = {{x1,y1,x2,y2,label,color}} })
+        map.set_function("overlay", [module, services](const std::string& id, const sol::object& spec) {
+            services->set_overlay(module->manifest.id, id, overlay_from(spec));
+        });
+        // gtproxy.map.route(x, y, { walk = false, gravity = nil })
+        map.set_function("route", [services](sol::this_state state, const double x, const double y, const sol::object& options) {
+            bool walk{ false };
+            std::optional<bool> gravity;
+            if (options.get_type() == sol::type::table) {
+                const auto t{ options.as<sol::table>() };
+                walk = t.get_or("walk", false);
+                if (const sol::object value{ t["gravity"] }; value.get_type() == sol::type::boolean) {
+                    gravity = value.as<bool>();
+                }
+            }
+            const auto route{ services->route({ whole_number(x, "gtproxy.map.route: x"), whole_number(y, "gtproxy.map.route: y") }, walk, gravity) };
+            sol::state_view view_lua{ state };
+            sol::table tiles{ view_lua.create_table() };
+            for (std::size_t i{ 0 }; i < route.tiles.size(); ++i) {
+                tiles[i + 1] = view_lua.create_table_with("x", route.tiles[i].x, "y", route.tiles[i].y);
+            }
+            return view_lua.create_table_with(
+                "ok", route.ok, "tiles", tiles, "steps", route.tiles.empty() ? 0 : static_cast<int>(route.tiles.size()) - 1, "reason", route.reason
+            );
+        });
+        // gtproxy.map.distances({{x,y}...}) -> steps to each (-1: no way), one search.
+        map.set_function("distances", [services](sol::this_state state, const sol::table& targets) {
+            sol::state_view view_lua{ state };
+            sol::table result{ view_lua.create_table() };
+            const auto world{ services->world() };
+            const auto steps{ services->distances() };
+            for (std::size_t i{ 1 }; i <= targets.size(); ++i) {
+                int value{ -1 };
+                const sol::object target{ targets[i] };
+                if (target.get_type() == sol::type::table && !steps.empty()) {
+                    const auto t{ target.as<sol::table>() };
+                    const int x{ static_cast<int>(t.get_or("x", -1.0)) };
+                    const int y{ static_cast<int>(t.get_or("y", -1.0)) };
+                    if (x >= 0 && y >= 0 && x < world.width && y < world.height) {
+                        const auto index{ static_cast<std::size_t>(y) * static_cast<std::size_t>(world.width) + static_cast<std::size_t>(x) };
+                        value = index < steps.size() ? steps[index] : -1;
+                    }
+                }
+                result[i] = value;
+            }
+            return result;
+        });
+        map.set_function("pick", [module, services](const sol::object& label) {
+            services->request_pick(module->manifest.id, label.get_type() == sol::type::string ? label.as<std::string>() : std::string{});
+        });
+        // gtproxy.map.render() -> path of the PNG, or nil and why
+        map.set_function("render", [services](sol::this_state state) {
+            std::string error;
+            const auto path{ services->render_png(error) };
+            return std::make_tuple(
+                path.empty() ? sol::make_object(state, sol::lua_nil) : sol::make_object(state, path),
+                sol::make_object(state, error)
+            );
+        });
+        api["map"] = map;
+
+        sol::table panel{ lua.create_table() };
+        // gtproxy.panel.set(id, { title, note, search = {value, placeholder}, columns, rows = {{id, cells, tile, style}}, buttons, inputs })
+        panel.set_function("set", [module, services](const std::string& id, const sol::object& spec) {
+            if (spec.get_type() != sol::type::table) {
+                throw std::runtime_error{ "gtproxy.panel.set: expects a table { title = , columns = , rows = ... }" };
+            }
+            std::string json;
+            to_json(json, spec, 0);
+            services->set_panel(module->manifest.id, id, json);
+        });
+        panel.set_function("remove", [module, services](const std::string& id) {
+            services->set_panel(module->manifest.id, id, std::nullopt);
+        });
+        api["panel"] = panel;
+
+        // Calls between modules: gtproxy.export(name, fn) offers a function,
+        // gtproxy.call(module, name, ...) calls another module's (values are
+        // copied: true/false, numbers, text and tables of them).
+        api.set_function("export", [module](const std::string& name, const sol::object& fn) {
+            if (fn.get_type() != sol::type::function) {
+                throw std::runtime_error{ "gtproxy.export: the second argument must be a function" };
+            }
+            module->exports[name] = fn.as<sol::protected_function>();
+        });
+        api.set_function("call", [self](sol::this_state state, const std::string& target, const std::string& name, const sol::variadic_args& args) {
+            return self->caller_(state, target, name, args);
+        });
     }
 
     // Timers, other files of the module, stored data.
@@ -949,9 +1373,16 @@ bool ModuleHost::load(const Manifest& manifest, const Settings& settings)
     load_store(*module);
 
     module->engine = std::make_unique<scripting::LuaEngine>();
-    module->engine->register_binding(std::make_unique<ModuleApi>(*module, services_, [this](const std::string_view name) {
-        return (reserved_ && reserved_(name)) || find_command(name) != nullptr;
-    }));
+    module->engine->register_binding(std::make_unique<ModuleApi>(
+        *module,
+        services_,
+        [this](const std::string_view name) {
+            return (reserved_ && reserved_(name)) || find_command(name) != nullptr;
+        },
+        [this](sol::this_state state, const std::string& target, const std::string& name, const sol::variadic_args& args) {
+            return call_export(state, target, name, args);
+        }
+    ));
 
     const auto code{ json::read_text(manifest.entry()) };
     bool ok{ code.has_value() };
@@ -1037,6 +1468,77 @@ ModuleHost::Outcome ModuleHost::emit(const std::string_view event, const Fields&
         }
     }
     return outcome;
+}
+
+sol::object ModuleHost::call_export(sol::this_state state, const std::string& target, const std::string& name, const sol::variadic_args& args)
+{
+    const auto it{ std::ranges::find_if(loaded_, [&](const std::unique_ptr<Loaded>& module) { return module->manifest.id == target; }) };
+    if (it == loaded_.end()) {
+        throw std::runtime_error{ fmt::format("gtproxy.call: module '{}' is not loaded", target) };
+    }
+    auto& module{ **it };
+    const auto fn{ module.exports.find(name) };
+    if (fn == module.exports.end()) {
+        throw std::runtime_error{ fmt::format("gtproxy.call: module '{}' offers no '{}'", target, name) };
+    }
+
+    sol::state& to{ module.engine->state() };
+    std::vector<sol::object> copied;
+    for (const auto& arg : args) {
+        copied.push_back(copy_value(arg, to, 0));
+    }
+    const Watchdog watchdog{ to.lua_state() };
+    sol::protected_function_result result{ fn->second(sol::as_args(copied)) };
+    if (!result.valid()) {
+        const sol::error error{ result };
+        throw std::runtime_error{ fmt::format("gtproxy.call {}.{}: {}", target, name, error.what()) };
+    }
+    if (result.return_count() == 0) {
+        return sol::make_object(state, sol::lua_nil);
+    }
+    return copy_value(result.get<sol::object>(), sol::state_view{ state }, 0);
+}
+
+ModuleHost::Reply ModuleHost::emit_to(const std::string_view id, const std::string_view event, const Fields& fields)
+{
+    Reply reply{};
+    const auto it{ std::ranges::find_if(loaded_, [&](const std::unique_ptr<Loaded>& module) { return module->manifest.id == id; }) };
+    if (it == loaded_.end()) {
+        return reply;
+    }
+    auto& module{ **it };
+    const auto handlers{ module.handlers.find(std::string{ event }) };
+    if (handlers == module.handlers.end()) {
+        return reply;
+    }
+    for (const auto& handler : handlers->second) {
+        sol::table table{ module.engine->state().create_table() };
+        if (fields) {
+            fields(table);
+        }
+        reply.ran = true;
+        const auto result{ call_guarded(module, handler, fmt::format("{} handler", event), table) };
+        if (!result) {
+            reply.ok = false;
+            reply.message = "the module failed (see the proxy log)";
+            return reply;
+        }
+        if (result->return_count() == 0) {
+            continue;
+        }
+        const sol::object value{ result->get<sol::object>() };
+        if (value.get_type() == sol::type::string) {
+            reply.message = value.as<std::string>();
+            return reply;
+        }
+        if (value.get_type() == sol::type::table) {
+            const auto t{ value.as<sol::table>() };
+            reply.ok = t.get_or("ok", true);
+            reply.message = t.get_or<std::string>("message", "");
+            return reply;
+        }
+    }
+    return reply;
 }
 
 std::size_t ModuleHost::right_click(const map::TilePos tile, const bool in_world)

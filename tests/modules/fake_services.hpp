@@ -1,9 +1,12 @@
 #pragma once
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fmt/format.h>
 
 #include "modules/api.hpp"
 
@@ -112,9 +115,10 @@ public:
         return true;
     }
 
-    modules::WalkView walk_to(const map::TilePos tile) override
+    modules::WalkView walk_to(const map::TilePos tile, const std::optional<bool> gravity) override
     {
         walking_ = true;
+        walk_gravity = gravity;
         return { true, "Walking", tile };
     }
     modules::WalkView walk_stop() override
@@ -143,9 +147,85 @@ public:
         return true;
     }
 
+    // API 3
+    [[nodiscard]] std::vector<modules::VendingInfo> vendings() const override { return vendings_; }
+    [[nodiscard]] std::vector<modules::LockInfo> locks() const override { return locks_; }
+    [[nodiscard]] modules::WorldSummary world_summary() const override { return summary_; }
+    [[nodiscard]] std::vector<modules::TileHit> find_tiles(const std::uint16_t item) const override
+    {
+        std::vector<modules::TileHit> hits;
+        for (const auto& hit : tiles_) {
+            if (hit.first == item) {
+                hits.push_back(hit.second);
+            }
+        }
+        return hits;
+    }
+    [[nodiscard]] modules::RouteView route(const map::TilePos tile, const bool walk, const std::optional<bool> gravity) override
+    {
+        routes.push_back({ tile, walk, gravity });
+        if (tile.x == 99) {
+            return { false, {}, "there is no way to get there" };
+        }
+        // A straight way from 5, 4 for tests.
+        modules::RouteView view{ true, {}, {} };
+        for (int x{ 5 }; x != tile.x; x += tile.x > 5 ? 1 : -1) {
+            view.tiles.push_back({ x, 4 });
+        }
+        view.tiles.push_back(tile);
+        return view;
+    }
+    [[nodiscard]] std::vector<int> distances() override { return distances_; }
+    bool tile_action(const map::TilePos tile, const std::uint32_t item) override
+    {
+        actions.push_back(fmt::format("{},{}:{}", tile.x, tile.y, item));
+        return true;
+    }
+    void set_overlay(const std::string& module_id, const std::string& id, const std::optional<modules::Overlay>& overlay) override
+    {
+        if (overlay) {
+            overlays[module_id + "/" + id] = *overlay;
+        }
+        else {
+            overlays.erase(module_id + "/" + id);
+        }
+    }
+    void set_panel(const std::string& module_id, const std::string& id, const std::optional<std::string>& json) override
+    {
+        if (json) {
+            panels[module_id + "/" + id] = *json;
+        }
+        else {
+            panels.erase(module_id + "/" + id);
+        }
+    }
+    void request_pick(const std::string& module_id, const std::string& label) override { picks.push_back(module_id + ":" + label); }
+    std::string render_png(std::string& error) override
+    {
+        error.clear();
+        return "data/renders/BOXTEST.png";
+    }
+
+    struct RouteAsk {
+        map::TilePos tile;
+        bool walk{ false };
+        std::optional<bool> gravity;
+    };
+
     modules::WalkOptions walk_options_{};
     std::vector<std::string> saved;
     std::vector<std::string> wheel_modes;
+    std::optional<bool> walk_gravity;
+    std::vector<modules::VendingInfo> vendings_;
+    std::vector<modules::LockInfo> locks_;
+    modules::WorldSummary summary_;
+    std::vector<std::pair<std::uint16_t, modules::TileHit>> tiles_;
+    std::vector<int> distances_;
+    std::vector<RouteAsk> routes;
+    std::vector<std::string> actions;
+    std::map<std::string, modules::Overlay> overlays;
+    std::map<std::string, std::string> panels;
+    std::vector<std::string> picks;
 
     std::vector<map::TilePos> reached;
     std::vector<map::Card> cards;

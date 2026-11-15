@@ -1,6 +1,7 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -35,6 +36,8 @@ struct WorldView {
     std::int32_t net_id{ -1 };
     std::string real_name;
     std::optional<PlayerView> me;
+    std::string server;         // the game server in config.json (for data per server)
+    std::uint32_t user_id{ 0 }; // yours, once spawned
 };
 
 struct PlayerInfo {
@@ -61,6 +64,71 @@ struct TileInfo {
     std::uint16_t flags{ 0 };
     std::string cell;           // free, solid, platform, dangerous, door
     std::string text;           // "Rock (10) on Cave Background (14) - solid."
+    // What the world data says about the block (API 3).
+    std::string extra;          // "vending", "lock", "door", "sign" or ""
+    std::uint32_t vend_item{ 0 };
+    std::int32_t vend_price{ 0 };   // > 0: World Locks per item, < 0: items per World Lock
+    std::uint32_t lock_owner{ 0 };
+    std::vector<std::uint32_t> lock_access;
+    std::string label;          // door / sign text
+};
+
+// A vending machine as the world data shows it (API 3). The stock is not in
+// the world data: only the machine's dialog tells it.
+struct VendingInfo {
+    int x{ 0 };
+    int y{ 0 };
+    std::uint16_t machine{ 0 };     // the machine's item (Vending Machine, DigiVend ...)
+    std::uint32_t item{ 0 };        // 0: empty machine
+    std::int32_t price{ 0 };        // > 0: World Locks per item, < 0: items per World Lock, 0: not for sale
+};
+
+struct LockInfo {
+    int x{ 0 };
+    int y{ 0 };
+    std::uint16_t item{ 0 };
+    std::uint32_t owner{ 0 };       // user ID
+    std::vector<std::uint32_t> access;
+    bool world{ false };            // locks the whole world (not an area lock)
+};
+
+struct TileHit {
+    int x{ 0 };
+    int y{ 0 };
+    bool background{ false };
+};
+
+struct WorldSummary {
+    std::map<std::uint16_t, int> foreground;
+    std::map<std::uint16_t, int> background;
+};
+
+struct RouteView {
+    bool ok{ false };
+    std::vector<map::TilePos> tiles;    // from your tile to the target
+    std::string reason;
+};
+
+// What a module draws on the map window (API 3).
+struct Overlay {
+    struct Marker {
+        int x{ 0 };
+        int y{ 0 };
+        std::string label;
+        std::string color;          // "#rrggbb"
+    };
+    struct Area {
+        int x1{ 0 };
+        int y1{ 0 };
+        int x2{ 0 };
+        int y2{ 0 };
+        std::string label;
+        std::string color;
+    };
+    std::vector<Marker> markers;
+    std::vector<map::TilePos> route;
+    std::string route_color;
+    std::vector<Area> areas;
 };
 
 struct InventoryItem {
@@ -159,8 +227,8 @@ public:
     // false when not connected to the game server
     virtual bool server_text(const std::string& text, bool game_message) = 0;
 
-    // API 2: walking
-    virtual WalkView walk_to(map::TilePos tile) = 0;
+    // API 2: walking (API 3: gravity for this walk only)
+    virtual WalkView walk_to(map::TilePos tile, std::optional<bool> gravity = std::nullopt) = 0;
     virtual WalkView walk_stop() = 0;
     [[nodiscard]] virtual bool walking() const = 0;
     [[nodiscard]] virtual WalkOptions walk_options() const = 0;
@@ -177,5 +245,31 @@ public:
     // "shift", "alt" (only while that key is held). False where the proxy
     // cannot see the mouse (only on Windows).
     virtual bool capture_wheel(const std::string& module_id, const std::string& mode) = 0;
+
+    // API 3: the world's machines, locks and blocks.
+    [[nodiscard]] virtual std::vector<VendingInfo> vendings() const = 0;
+    [[nodiscard]] virtual std::vector<LockInfo> locks() const = 0;
+    [[nodiscard]] virtual WorldSummary world_summary() const = 0;
+    [[nodiscard]] virtual std::vector<TileHit> find_tiles(std::uint16_t item) const = 0;
+
+    // API 3: ways. walk false: the reachability check's way (4 neighbours,
+    // your body fits); true: the way a walk takes (gravity: on foot or not).
+    [[nodiscard]] virtual RouteView route(map::TilePos tile, bool walk, std::optional<bool> gravity) = 0;
+    // Steps from your tile to every tile, row by row; -1 no way; empty if unknown.
+    [[nodiscard]] virtual std::vector<int> distances() = 0;
+
+    // API 3: what the game sends when you use an item on a tile (32 = the
+    // wrench: opens a machine's or a lock's dialog). False if not connected.
+    virtual bool tile_action(map::TilePos tile, std::uint32_t item) = 0;
+
+    // API 3: the map window. Overlays (markers, a route, areas) and tabs
+    // (JSON built from a Lua table), per module and id; nullopt removes.
+    virtual void set_overlay(const std::string& module_id, const std::string& id, const std::optional<Overlay>& overlay) = 0;
+    virtual void set_panel(const std::string& module_id, const std::string& id, const std::optional<std::string>& json) = 0;
+    // The next left click on the map goes to this module ("pick" event)
+    // instead of walking; "" cancels.
+    virtual void request_pick(const std::string& module_id, const std::string& label) = 0;
+    // A PNG of the map as the window shows it; the file's path, or "" and why.
+    virtual std::string render_png(std::string& error) = 0;
 };
 }

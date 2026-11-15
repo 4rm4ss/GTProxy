@@ -171,4 +171,68 @@ ReachResult check_reach(
     result.status = Reach::Unreachable;
     return result;
 }
+
+std::vector<int> reach_distances(const Grid& grid, const glm::vec2 position, const Body& body)
+{
+    std::vector<int> distance(grid.cells().size(), -1);
+    const TilePos start{ body_tile(position, body) };
+    if (grid.empty() || !grid.contains(start)) {
+        return distance;
+    }
+
+    const int width{ grid.size().x };
+    const TilePos nowhere{ -1, -1 };
+    std::deque<TilePos> queue{ start };
+    distance[tile_index(start, width)] = 0;
+    while (!queue.empty()) {
+        const TilePos tile{ queue.front() };
+        queue.pop_front();
+        const int here{ distance[tile_index(tile, width)] };
+        for (const auto step : NEIGHBOURS) {
+            const TilePos next{ tile.x + step.x, tile.y + step.y };
+            if (!grid.contains(next) || distance[tile_index(next, width)] >= 0 || !fits(grid, next, body, nowhere)) {
+                continue;
+            }
+            distance[tile_index(next, width)] = here + 1;
+            queue.push_back(next);
+        }
+    }
+    return distance;
+}
+
+std::vector<TilePos> reach_path(const Grid& grid, const glm::vec2 position, const Body& body, const TilePos target)
+{
+    const TilePos start{ body_tile(position, body) };
+    if (grid.empty() || !grid.contains(start) || !grid.contains(target) || !fits(grid, target, body, target)) {
+        return {};
+    }
+    if (start == target) {
+        return { start };
+    }
+
+    const int width{ grid.size().x };
+    std::vector<int> from(grid.cells().size(), -2);     // -2 unseen, -1 start
+    std::deque<TilePos> queue{ start };
+    from[tile_index(start, width)] = -1;
+    while (!queue.empty()) {
+        const TilePos tile{ queue.front() };
+        queue.pop_front();
+        for (const auto step : NEIGHBOURS) {
+            const TilePos next{ tile.x + step.x, tile.y + step.y };
+            if (!grid.contains(next) || from[tile_index(next, width)] != -2 || !fits(grid, next, body, target)) {
+                continue;
+            }
+            from[tile_index(next, width)] = static_cast<int>(tile_index(tile, width));
+            if (next == target) {
+                std::vector<TilePos> path{ next };
+                for (int at{ from[tile_index(next, width)] }; at >= 0; at = from[static_cast<std::size_t>(at)]) {
+                    path.push_back(TilePos{ at % width, at / width });
+                }
+                return { path.rbegin(), path.rend() };
+            }
+            queue.push_back(next);
+        }
+    }
+    return {};
+}
 }
