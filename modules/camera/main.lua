@@ -1,14 +1,16 @@
 -- Camera (module API 2, see docs/modules.md).
 --
--- The mouse wheel over the game's window zooms without the game's limits:
--- the proxy takes the wheel from the game (only over Growtopia's window)
--- and moves the camera with the server's own call OnZoomCamera(zoom, ms),
--- sent to your game only. /zoom and the Camera page of /proxy set a value
--- directly.
+-- The server's camera call OnZoomCamera(zoom, ms), sent to your game only:
+-- /zoom <value>, /zoom test (which values move the camera in your game) and
+-- the Camera page of /proxy. Optionally the proxy takes the mouse wheel over
+-- Growtopia's window and turns it into OnZoomCamera ("wheel"); that only
+-- helps if your game obeys OnZoomCamera, so it is off by default and the
+-- wheel stays the game's.
 --
 -- Settings (config/modules/camera.json, or the Camera page, which writes
 -- the same file):
---   wheel          "always", "ctrl" / "shift" / "alt" (only while held), "off"
+--   wheel          "off" (default: the game's wheel), "ctrl" / "shift" / "alt"
+--                  (only while held), "always"
 --   wheel_step     how much one notch zooms (1.15 = 15 %)
 --   invert         the other way round, if the camera moves the wrong way
 --   min_zoom, max_zoom   the range the wheel moves in
@@ -31,6 +33,10 @@ local function number_text(n)
         return string.format("%d", math.floor(n))
     end
     return string.format("%.4g", n)
+end
+
+local function message(text)
+    gtproxy.game.message(text)
 end
 
 -- Sends OnZoomCamera(zoom, ms) to your game; false when not in a world.
@@ -104,8 +110,52 @@ gtproxy.on("disconnect", function()
     keep_timer = nil
 end)
 
+-- /zoom test: which values (if any) move the camera in your game. The
+-- game may ignore OnZoomCamera; then the wheel must stay the game's.
+local TEST_STEPS = {
+    { 0.5, 300 }, { 2, 300 }, { 0.1, 1000 }, { 10, 1000 }, { 100, 1000 }, { 10000, 1000 }, { 1, 300 },
+}
+local test_timer = nil
+
+local function zoom_test(reply)
+    if not gtproxy.world.info().in_world then
+        reply("`4Oops: ``Enter a world first.")
+        return
+    end
+    gtproxy.cancel(test_timer)
+    local step = 0
+    local function next_step()
+        step = step + 1
+        local entry = TEST_STEPS[step]
+        if not entry then
+            test_timer = nil
+            message(string.format("`oZoom test done. Tell me the step number where the camera moved. If it never moved, your game ignores OnZoomCamera: keep the wheel `woff`` (%szoom wheel off) - the zoom limit is inside the game client.", P))
+            return
+        end
+        send(entry[1], entry[2])
+        message(string.format("`oZoom test `w%d/%d``: OnZoomCamera(`w%s``, %d ms) - did the camera move?", step, #TEST_STEPS, number_text(entry[1]), entry[2]))
+        test_timer = gtproxy.after(3000, next_step)
+    end
+    next_step()
+end
+
 local function cmd_zoom(args, reply)
     local first = args[1]
+    if first == "test" then
+        zoom_test(reply)
+        return
+    end
+    if first == "wheel" and args[2] then
+        local mode = args[2]
+        if mode ~= "off" and mode ~= "always" and mode ~= "ctrl" and mode ~= "shift" and mode ~= "alt" then
+            reply(string.format("`4Usage: ``%szoom wheel off|ctrl|always", P))
+            return
+        end
+        local ok, why = gtproxy.save_setting("wheel", mode)
+        apply_settings()
+        reply(ok and string.format("`oMouse wheel: `w%s``%s.", mode, mode == "off" and " - the game's own zoom again" or "") or ("`4Camera: ``" .. why))
+        return
+    end
     if not first then
         reply(string.format(
             "`oCamera zoom: `w%s``%s. Mouse wheel over the game: `w%s``. %szoom <value> [ms]; %szoom reset (`w%s``).",
@@ -129,7 +179,7 @@ local function cmd_zoom(args, reply)
     zoom_to(zoom, ms, reply)
 end
 
-gtproxy.command("zoom", "Camera zoom beyond the mouse wheel: zoom <value> [ms] | zoom reset", function(args, ctx)
+gtproxy.command("zoom", "Camera: zoom <value> [ms] | zoom reset | zoom test | zoom wheel off|ctrl|always", function(args, ctx)
     cmd_zoom(args, ctx.reply)
 end)
 
@@ -138,9 +188,9 @@ end)
 ---------------------------------------------------------------------------
 
 local WHEEL_MODES = {
-    { "always", "Wheel zooms without limits" },
-    { "ctrl", "Only with Ctrl held (the game's wheel otherwise)" },
-    { "off", "Off (the game's own wheel)" },
+    { "off", "Off: the game's own wheel (normal zoom)" },
+    { "ctrl", "Test: Ctrl + wheel sends OnZoomCamera" },
+    { "always", "Test: the wheel only sends OnZoomCamera" },
 }
 
 local function camera_page()
@@ -169,10 +219,6 @@ local function camera_page()
         :spacer()
         :button("page_main", "<< Menu")
     return d:finish("gtproxy_camera", "Save")
-end
-
-local function message(text)
-    gtproxy.game.message(text)
 end
 
 local function save(changes)

@@ -7,7 +7,7 @@
   "description": "The mouse wheel over the game zooms without the game's limits (OnZoomCamera); /zoom and the Camera page of /proxy.",
   "author": "GTProxy",
   "settings": {
-    "wheel": "always",
+    "wheel": "off",
     "wheel_step": 1.15,
     "invert": false,
     "min_zoom": 0.01,

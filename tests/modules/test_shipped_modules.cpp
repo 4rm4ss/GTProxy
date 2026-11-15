@@ -275,9 +275,11 @@ TEST_F(Shipped, CameraZoomsWithTheGamesOwnCall)
 
 TEST_F(Shipped, CameraTakesTheWheelAndZoomsWithoutLimits)
 {
-    // At load the camera module asks for the wheel (setting "wheel": "always").
+    // The wheel stays the game's unless asked for ("wheel": "off" by default).
     ASSERT_FALSE(services.wheel_modes.empty());
-    EXPECT_EQ(services.wheel_modes.front(), "camera:always");
+    EXPECT_EQ(services.wheel_modes.front(), "camera:off");
+    host.run_command("zoom", { "wheel", "always" }, Source::Game);
+    EXPECT_EQ(services.saved.back(), "camera:wheel=\"always\"");
 
     // Two notches away from you: closer by 1.15 twice; far beyond the game's
     // own range towards you.
@@ -322,4 +324,15 @@ TEST_F(Shipped, WalkingSettingsGoToTheEngineAndToTheConfig)
         event["values"] = lua.create_table();
     });
     EXPECT_EQ(services.saved, (std::vector<std::string>{ "walk:doors=\"all\"" }));
+}
+
+TEST_F(Shipped, CameraZoomTestStepsThroughValues)
+{
+    host.run_command("zoom", { "test" }, Source::Game);
+    ASSERT_EQ(services.calls.size(), 1u);
+    EXPECT_FLOAT_EQ(std::get<float>(services.calls[0].args[0]), 0.5f);
+    EXPECT_NE(services.messages.back().find("Zoom test `w1/7``"), std::string::npos);
+    run_for(std::chrono::milliseconds{ 3200 });
+    ASSERT_EQ(services.calls.size(), 2u);
+    EXPECT_FLOAT_EQ(std::get<float>(services.calls[1].args[0]), 2.0f);
 }
