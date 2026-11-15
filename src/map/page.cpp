@@ -52,7 +52,13 @@ button.active { border-color: var(--accent); color: var(--accent); }
 #info { position: fixed; right: 12px; bottom: 12px; width: min(340px, calc(100% - 24px)); background: var(--panel);
   border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: none; }
 #info.show { display: block; }
-#info h3 { margin: 0 0 4px; font-size: 13px; }
+#info h3 { margin: 0 0 4px; font-size: 14px; }
+#info.reach-ok { border-left: 3px solid var(--ok); }
+#info.reach-ok h3 { color: var(--ok); }
+#info.reach-bad { border-left: 3px solid var(--bad); }
+#info.reach-bad h3 { color: var(--bad); }
+#info.reach-none { border-left: 3px solid var(--muted); }
+#info.reach-none h3 { color: var(--muted); }
 #help { position: fixed; right: 12px; top: 56px; width: min(300px, calc(100% - 24px)); background: var(--panel);
   border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; display: none; color: var(--muted); }
 #help.show { display: block; }
@@ -80,7 +86,8 @@ button.active { border-color: var(--accent); color: var(--accent); }
 <div id="info"><h3 id="info-title"></h3><div id="info-text"></div></div>
 <div id="help">
   <p><b>Left click</b> a tile: walk there (on a block: next to it).<br>
-  <b>Right click</b>: what is on the tile.<br>
+  <b>Right click</b>: can you get there from where you stand
+  (Цель доступна / Цель недоступна / Нет данных; 4 directions, no squeezing between corners).<br>
   <b>Drag</b>: move the map, <b>wheel</b>: zoom.<br>
   <b>C</b> center on you, <b>F</b> follow, <b>Esc</b> stop.</p>
   <p><span class="sw" style="background:#ffcf4a"></span>you &nbsp;
@@ -225,7 +232,13 @@ function draw() {
   }
   const target = state.has_target ? state.target : null;
   if (target) ring(target, state.walking ? "#4fc3ff" : "rgba(79,195,255,0.45)");
-  if (marker && performance.now() - marker.at < 900) { ring(marker, marker.ok ? "#59d18c" : "#ff6b6b"); dirty = true; }
+  if (marker && performance.now() - marker.at < marker.hold) {
+    const color = marker.kind === "none" ? "#8b93a3" : (marker.ok ? "#59d18c" : "#ff6b6b");
+    ring(marker, color);
+    const s = worldToScreen(marker.x * TILE, marker.y * TILE);
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(s.x + 1, s.y + 1, TILE * cam.zoom - 2, TILE * cam.zoom - 2);
+    dirty = true;
+  }
 
   for (const p of state.players || []) {
     const s = worldToScreen(p.x, p.y);
@@ -271,10 +284,10 @@ function toast(text, ok) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove("show"), 4000);
 }
-function showInfo(title, text) {
+function showInfo(title, text, kind) {
   $("info-title").textContent = title;
   $("info-text").textContent = text;
-  $("info").classList.add("show");
+  $("info").className = "show" + (kind ? " reach-" + kind : "");
   clearTimeout(infoTimer);
   infoTimer = setTimeout(() => $("info").classList.remove("show"), 8000);
 }
@@ -290,9 +303,15 @@ async function post(path, params) {
 async function sendClick(sx, sy, button) {
   try {
     const res = await post("/api/click", { x: sx, y: sy, button, ox: cam.ox, oy: cam.oy, zoom: cam.zoom, w: W, h: H });
-    if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, at: performance.now() }; dirty = true; }
-    if (res.action === "inspect" && res.ok) showInfo(`Tile ${res.tile.x}, ${res.tile.y}`, res.message.replace(/^Tile [^:]*: /, ""));
-    else toast(res.message, res.ok);
+    if (res.action === "reach") {
+      // The reachability check: shown on the tile and in the card.
+      const kind = res.reach === "reachable" ? "ok" : (res.reach === "no_data" ? "none" : "bad");
+      if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, kind, at: performance.now(), hold: 4000 }; dirty = true; }
+      showInfo(res.message, res.detail, kind);
+    } else {
+      if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, at: performance.now(), hold: 900 }; dirty = true; }
+      toast(res.message, res.ok);
+    }
     poll(true);
   } catch (e) { toast("The proxy did not answer: " + e.message, false); }
 }

@@ -120,6 +120,7 @@ command, including those added by Lua scripts.
 | `/balance` | Your locks in World Locks |
 | `/map` | Open the map window (see below) |
 | `/goto <x> <y>` | Walk to a tile; `/goto stop` stops |
+| `/reach <x> <y>` | Can you get to that tile from where you stand (as a right click in the map window) |
 | `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching |
 
 Drops are the same request and "how many?" answer the game sends when you
@@ -136,7 +137,16 @@ dangerous tiles, doors, players, dropped items and your path.
 
 - **Left click** a tile: walk there. A click on a block walks to the free tile
   next to it, on your side.
-- **Right click**: what is on the tile (blocks, players, dropped items).
+- **Right click**: can you get there from where you stand - *Цель доступна*
+  (reachable), *Цель недоступна* (closed off; also for a block in the tile
+  or a tile outside the map) or *Нет данных* (no world, items.dat or
+  position yet). It only reports, nothing is sent to the server. The check
+  is a breadth-first search over the four neighbours of each tile (never
+  diagonally between two blocks), from the tile your avatar stands in; your
+  collision box from OnSpawn (`colrect`, 20x30 = one tile) has to fit in every
+  tile on the way. Each check is logged with your position, the tile and the
+  result. The same check: `/reach <x> <y>` in the game, or `reach <x> <y>`
+  typed into the proxy's console window.
 - **Drag** moves the map, the **wheel** zooms; **C** centres on you, **F**
   follows you, **Esc** stops walking. The header shows the tile under the cursor.
 

@@ -90,3 +90,13 @@ TEST(MapClickTest, ResolveErrors)
     ASSERT_TRUE(bad_zoom);
     EXPECT_EQ(map::resolve_click(*bad_zoom, { 10, 10 }).error(), ClickError::BadView);
 }
+
+TEST(MapClickTest, ParsesTypedTiles)
+{
+    EXPECT_EQ(map::parse_tile("12", "30"), (TilePos{ 12, 30 }));
+    EXPECT_EQ(map::parse_tile("-1", "0"), (TilePos{ -1, 0 }));
+    EXPECT_FALSE(map::parse_tile("", "3"));
+    EXPECT_FALSE(map::parse_tile("1.5", "3"));
+    EXPECT_FALSE(map::parse_tile("x", "3"));
+    EXPECT_FALSE(map::parse_tile("3", "4a"));
+}

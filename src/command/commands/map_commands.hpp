@@ -1,5 +1,4 @@
 #pragma once
-#include <charconv>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -9,6 +8,7 @@
 #include "feature_commands.hpp"
 #include "../../core/browser.hpp"
 #include "../../core/handlers/map_handler.hpp"
+#include "../../map/click.hpp"
 
 // Commands of the map window and walking (core::handlers::MapHandler).
 namespace command {
@@ -62,28 +62,57 @@ public:
             return Result::Success;
         }
 
-        const auto x{ ctx.args.size() == 2 ? number(ctx.args[0]) : std::nullopt };
-        const auto y{ ctx.args.size() == 2 ? number(ctx.args[1]) : std::nullopt };
-        if (!x || !y) {
+        const auto tile{ ctx.args.size() == 2 ? map::parse_tile(ctx.args[0], ctx.args[1]) : std::nullopt };
+        if (!tile) {
             reply(fmt::format("`4Usage: ``{0}goto <x> <y> (tile, as {0}pos shows it); {0}goto stop", ctx.registry.prefix()));
             return Result::InvalidArguments;
         }
 
-        const auto result{ map_.walk_to(map::TilePos{ *x, *y }) };
+        const auto result{ map_.walk_to(*tile) };
         reply(fmt::format("{}[map] {}", result.ok ? "`o" : "`4", result.message));
         return result.ok ? Result::Success : Result::Failed;
     }
+};
+
+// /reach <x> <y>: the right click check typed by hand. The game's font has
+// no Cyrillic, so the game gets the result in English; the proxy log has
+// it as in the map window ("Цель доступна" ...).
+class ReachCommand final : public MapFeatureCommand {
+public:
+    using MapFeatureCommand::MapFeatureCommand;
+
+    [[nodiscard]] std::string_view name() const override { return "reach"; }
+    [[nodiscard]] std::string description() const override { return "Can you get to a tile from where you stand: reach <x> <y>"; }
+
+    Result execute(const Context& ctx) override
+    {
+        const auto tile{ ctx.args.size() == 2 ? map::parse_tile(ctx.args[0], ctx.args[1]) : std::nullopt };
+        if (!tile) {
+            reply(fmt::format("`4Usage: ``{0}reach <x> <y> (tile, as {0}pos shows it)", ctx.registry.prefix()));
+            return Result::InvalidArguments;
+        }
+
+        const auto result{ map_.check_reach(*tile, "/reach in the game") };
+        reply(fmt::format("[map] {}, {}: {}", tile->x, tile->y, in_english(result)));
+        return Result::Success;
+    }
 
 private:
-    static std::optional<int> number(const std::string_view text)
+    static std::string in_english(const core::handlers::MapHandler::Result& result)
     {
-        int value{};
-        const auto* end{ text.data() + text.size() };
-        const auto [ptr, ec]{ std::from_chars(text.data(), end, value) };
-        if (ec != std::errc{} || ptr != end) {
-            return std::nullopt;
+        if (result.reach == "reachable") {
+            return "`2target reachable``";
         }
-        return value;
+        if (result.reach == "unreachable") {
+            return "`4target unreachable``";
+        }
+        if (result.reach == "blocked") {
+            return "`4target unreachable: a block is there``";
+        }
+        if (result.reach == "out_of_bounds") {
+            return "`4target unreachable: outside the map``";
+        }
+        return "`5no data`` (no world, items.dat or position yet - see the proxy log)";
     }
 };
 

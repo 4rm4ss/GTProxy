@@ -1,11 +1,15 @@
 #include "core.hpp"
 
 #include <chrono>
+#include <sstream>
+#include <string>
 #include <thread>
+#include <vector>
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
 
 #include "browser.hpp"
+#include "../map/click.hpp"
 #include "../packet/register_packets.hpp"
 #include "../scripting/bindings/command_bindings.hpp"
 #include "../scripting/bindings/event_bindings.hpp"
@@ -95,6 +99,35 @@ Core::Core()
     if (const auto url{ map_server_->url() }; url && config_.get_map_config().open_on_start) {
         browser::open_window(*url);
     }
+
+    console_ = std::make_unique<ConsoleInput>();
+    spdlog::info("Proxy console: type 'reach <x> <y>' here to check if a tile can be reached ('help' lists commands)");
+}
+
+void Core::run_console_line(const std::string& line) const
+{
+    std::istringstream words{ line };
+    std::vector<std::string> args;
+    for (std::string word; words >> word;) {
+        args.push_back(std::move(word));
+    }
+    if (args.empty()) {
+        return;
+    }
+
+    if (args[0] == "reach") {
+        const auto tile{ args.size() == 3 ? map::parse_tile(args[1], args[2]) : std::nullopt };
+        if (!tile) {
+            spdlog::warn("Usage: reach <x> <y> (tile, as /pos shows it)");
+            return;
+        }
+        // The check logs your position, the tile and the result itself.
+        const auto result{ map_handler_->check_reach(*tile, "proxy console") };
+        spdlog::info("{} - {}", result.message, result.detail);
+        return;
+    }
+
+    spdlog::info("Proxy console commands: reach <x> <y> - can you get to that tile from where you stand");
 }
 
 Core::~Core()
@@ -147,6 +180,9 @@ void Core::run() const
         feature_handler_->update();
         inventory_handler_->update();
         map_handler_->update();
+        for (const auto& line : console_->take_lines()) {
+            run_console_line(line);
+        }
         script_scheduler_->update(elapsed);
 
         if (sleep_duration > std::chrono::microseconds::zero()) {

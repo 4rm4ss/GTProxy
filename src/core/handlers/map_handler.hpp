@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "feature_handler.hpp"
@@ -13,6 +14,7 @@
 #include "../../map/grid.hpp"
 #include "../../map/movement.hpp"
 #include "../../map/pathfinder.hpp"
+#include "../../map/reachability.hpp"
 #include "../../network/client.hpp"
 #include "../../network/server.hpp"
 #include "../../packet/packet_types.hpp"
@@ -36,9 +38,11 @@ class MapHandler {
 public:
     struct Result {
         bool ok{ false };
-        std::string action;             // "walk", "inspect" or "stop"
+        std::string action;             // "walk", "reach", "inspect" or "stop"
         std::optional<map::TilePos> tile;
         std::string message;
+        std::string reach;              // "reach": map::code() of the result
+        std::string detail;             // "reach": start, target, steps, tile
     };
 
     MapHandler(
@@ -55,8 +59,15 @@ public:
     MapHandler& operator=(const MapHandler&) = delete;
     ~MapHandler() = default;
 
-    // A click in the map window: cursor -> tile, then walk or inspect.
+    // A click in the map window: cursor -> tile, then walk (left button) or
+    // the reachability check (right button).
     Result handle_click(const map::Click& click);
+    // Can you get to the tile from where you stand: BFS over the 4
+    // neighbours of each tile, your avatar's collision box has to fit in
+    // every tile on the way. "Цель доступна", "Цель недоступна" or "Нет
+    // данных" (no world, items.dat or position yet). Only reports; logs your
+    // position, the tile and the result. 'source' names who asked (log).
+    Result check_reach(map::TilePos target, std::string_view source);
     // Walk to a tile (a block: to the free tile next to it).
     Result walk_to(map::TilePos tile);
     // What is on a tile.

@@ -154,6 +154,12 @@ int main(const int argc, char** argv)
 {
     std::shared_ptr<core::session_log::Sink> session;
 
+#ifdef _WIN32
+    // Log lines are UTF-8 (item names, map results in Russian); without this
+    // the console shows them in the old OEM code page as garbage.
+    SetConsoleOutputCP(CP_UTF8);
+#endif
+
     try {
         core::Logger logger{};
 

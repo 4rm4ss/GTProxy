@@ -84,6 +84,12 @@ struct Viewport {
     [[nodiscard]] glm::vec2 world_to_screen(const glm::vec2 world) const { return (world - origin) * zoom; }
 };
 
+// The tile a point of the canvas shows, inside the world or not.
+[[nodiscard]] inline TilePos cursor_tile(const Viewport& view, const glm::vec2 screen)
+{
+    return world_to_tile(view.screen_to_world(screen));
+}
+
 // Cursor -> tile: the tile under a point of the canvas. Nothing when the view
 // is invalid, the point is outside the canvas or there is no world there.
 [[nodiscard]] inline std::optional<TilePos> screen_to_tile(
@@ -100,7 +106,7 @@ struct Viewport {
         return std::nullopt;
     }
 
-    const TilePos tile{ world_to_tile(view.screen_to_world(screen)) };
+    const TilePos tile{ cursor_tile(view, screen) };
     if (!in_bounds(tile, world_size)) {
         return std::nullopt;
     }

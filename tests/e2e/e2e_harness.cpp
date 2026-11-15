@@ -1083,10 +1083,14 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
         check(bad && bad->status == 400, "map: a malformed click is rejected");
     }
 
-    // Right click: what is on the tile.
+    // Right click: the reachability check, with what is on the tile.
     {
         const auto info{ click_tile(http, 0, 7, 2) };
-        check(contains(info, "\"action\":\"inspect\"") && contains(info, "Tile 0, 7: Dirt (2) on Cave Background (14) - solid"), fmt::format("map: right click inspects the tile ({})", info.value_or("-")));
+        check(
+            contains(info, "\"action\":\"reach\"") && contains(info, "\"reach\":\"blocked\"")
+                && contains(info, "Dirt (2) on Cave Background (14) - solid"),
+            fmt::format("map: right click on a block: rejected, with the tile's contents ({})", info.value_or("-"))
+        );
     }
 
     // Left click on 10, 6: walk over the rock wall, around the lava.
@@ -1232,7 +1236,187 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
         }
     }
 
-    // E2E_MAP_HOLD_SECONDS=N keeps you in MAPTEST for N seconds, e.g. to try
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
+// --- Right click: can the target be reached from where you stand ------------
+constexpr int BOX_W{ 12 };
+constexpr int BOX_H{ 9 };
+
+// 12x9 world, you stand at 5, 4 inside a rock box (x 3-7, y 2-6). Also: a
+// closed room around 10, 3, a pocket at 10, 7 open only diagonally, a lone
+// block at 1, 2 and a dirt floor.
+std::uint16_t box_fg(const int x, const int y)
+{
+    if (y == BOX_H - 1) {
+        return 2;
+    }
+    if ((x == 3 || x == 7) && y >= 2 && y <= 6) {
+        return 10;
+    }
+    if ((y == 2 || y == 6) && x >= 3 && x <= 7) {
+        return 10;
+    }
+    if (((x == 9 || x == 11) && y >= 2 && y <= 4) || ((y == 2 || y == 4) && x == 10)) {
+        return 10;
+    }
+    if ((x == 10 && y == 6) || (x == 9 && y == 7) || (x == 11 && y == 7)) {
+        return 10;
+    }
+    if (x == 1 && y == 2) {
+        return 10;
+    }
+    return 0;
+}
+
+Bytes build_box_world()
+{
+    utils::ByteStream<> bs{};
+    bs.write<std::uint16_t>(0x18);
+    bs.write<std::uint32_t>(0);
+    bs.write(std::string{ "BOXTEST" });
+    bs.write<std::int32_t>(BOX_W);
+    bs.write<std::int32_t>(BOX_H);
+    bs.write<std::uint32_t>(BOX_W * BOX_H);
+    for (int i = 0; i < 5; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    for (int y = 0; y < BOX_H; ++y) {
+        for (int x = 0; x < BOX_W; ++x) {
+            bs.write<std::uint16_t>(box_fg(x, y));
+            bs.write<std::uint16_t>(14);
+            bs.write<std::uint16_t>(0);
+            bs.write<std::uint16_t>(0);
+        }
+    }
+    for (int i = 0; i < 12; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    bs.write<std::uint32_t>(0);
+    bs.write<std::uint32_t>(0);
+    return bs.take_data();
+}
+
+// Right click in the window on a tile (view: no scroll, zoom 1, or scrolled
+// left by 'ox' world pixels).
+std::optional<std::string> right_click(httplib::Client& http, const int x, const int y, const int ox = 0)
+{
+    return map_post(http, fmt::format(
+        "/api/click?x={}&y={}&button=2&ox={}&oy=0&zoom=1&w=800&h=600",
+        x * 32 + 16 - ox, y * 32 + 16, ox
+    ));
+}
+
+std::optional<std::string> game_reply(Endpoint& client, Endpoint& game_server, const std::string& command)
+{
+    WalkLog log{};
+    input(client, command);
+    if (!follow_walk(client, game_server, log, "[map]", 3000ms)) {
+        return std::nullopt;
+    }
+    return log.console.back();
+}
+
+void run_reach_checks(Endpoint& client, Endpoint& game_server)
+{
+    httplib::Client http{ "127.0.0.1", MAP_PORT };
+    http.set_connection_timeout(2);
+    http.set_read_timeout(5);
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    const auto reach_is = [](const std::optional<std::string>& answer, const std::string& code, const std::string& message) {
+        return contains(answer, fmt::format("\"reach\":\"{}\"", code)) && contains(answer, fmt::format("\"message\":\"{}", message));
+    };
+
+    // Joining a new world: no map yet.
+    send(client, text_packet(packet::NET_MESSAGE_GAME_MESSAGE, "action|join_request\nname|BOXTEST\ninvitedWorld|0\n"));
+    check(receive(game_server).has_value(), "reach: join request forwarded");
+    {
+        const auto answer{ right_click(http, 2, 2) };
+        check(reach_is(answer, "no_data", "Нет данных") && contains(answer, "карта мира ещё не получена"), fmt::format("reach: before the world arrives: Нет данных ({})", answer.value_or("-")));
+        const auto chat{ game_reply(client, game_server, "/reach 2 2") };
+        check(contains(chat, "no data"), fmt::format("reach: /reach without a world says no data ({})", chat.value_or("-")));
+    }
+
+    // The world, but not your position yet.
+    send(game_server, map_data_packet(build_box_world()));
+    check(receive(client).has_value(), "reach: world data forwarded");
+    {
+        const auto answer{ right_click(http, 2, 2) };
+        check(reach_is(answer, "no_data", "Нет данных") && contains(answer, "позиция игрока ещё не получена"), fmt::format("reach: no position yet: Нет данных ({})", answer.value_or("-")));
+    }
+
+    // You spawn inside the closed box (screenshot 1).
+    const std::string spawn{
+        "spawn|avatar\nnetID|5\nuserID|1005\ncolrect|0|0|20|30\nposXY|160|128\nname|`wE2EPlayer``\ncountry|ru\ninvis|0\nmstate|0\nsmstate|0\nonlineID|\ntype|local"
+    };
+    send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, spawn }));
+    check(receive_call(client, "OnSpawn").has_value(), "reach: local OnSpawn forwarded");
+    check(wait_json(http, "/api/state", [](const std::string& body) {
+        return body.find("\"world\":\"BOXTEST\"") != std::string::npos && body.find("\"tx\":5,\"ty\":4,\"me\":true") != std::string::npos;
+    }).has_value(), "reach: you are at 5, 4 in BOXTEST");
+
+    {
+        bool all_unreachable{ true };
+        for (const auto [x, y] : std::array<std::pair<int, int>, 6>{ { { 0, 0 }, { 0, 4 }, { 2, 4 }, { 8, 4 }, { 5, 7 }, { 11, 0 } } }) {
+            const auto answer{ right_click(http, x, y) };
+            const bool ok{ reach_is(answer, "unreachable", "Цель недоступна\"") };
+            all_unreachable = all_unreachable && ok;
+            if (!ok) {
+                fmt::print("    {}, {}: {}\n", x, y, answer.value_or("-"));
+            }
+        }
+        check(all_unreachable, "reach: closed box - every free tile outside: Цель недоступна");
+
+        const auto inside{ right_click(http, 4, 3) };
+        check(reach_is(inside, "reachable", "Цель доступна") && contains(inside, "От 5, 4 до 4, 3: 2 шага"), fmt::format("reach: closed box - a tile inside: Цель доступна, 2 steps ({})", inside.value_or("-")));
+
+        const auto wall{ right_click(http, 3, 4) };
+        check(reach_is(wall, "blocked", "Цель недоступна: в клетке блок") && contains(wall, "Rock (10)"), fmt::format("reach: the wall itself is rejected ({})", wall.value_or("-")));
+
+        const auto right{ right_click(http, 13, 4) };
+        check(reach_is(right, "out_of_bounds", "Цель недоступна: за пределами карты"), fmt::format("reach: beyond the right edge is rejected ({})", right.value_or("-")));
+        const auto left{ right_click(http, -2, 4, -96) };
+        check(reach_is(left, "out_of_bounds", "Цель недоступна: за пределами карты") && contains(left, "\"tile\":{\"x\":-2,\"y\":4}"), fmt::format("reach: left of the world (scrolled view) is rejected ({})", left.value_or("-")));
+    }
+
+    // The block on your left is broken (screenshot 2): the box has an opening.
+    send(game_server, tile_change(3, 4, 18));
+    check(wait_json(http, "/api/tiles", [](const std::string& body) {
+        const auto fg{ json_numbers(body, "fg") };
+        return fg.size() == BOX_W * BOX_H && fg[4 * BOX_W + 3] == 0;
+    }).has_value(), "reach: the broken block shows up on the map");
+    {
+        const auto out{ right_click(http, 0, 4) };
+        check(reach_is(out, "reachable", "Цель доступна") && contains(out, "От 5, 4 до 0, 4: 5 шагов"), fmt::format("reach: opened box - outside through the opening: Цель доступна, 5 steps ({})", out.value_or("-")));
+
+        const auto around{ right_click(http, 8, 4) };
+        check(reach_is(around, "reachable", "Цель доступна"), fmt::format("reach: opened box - behind the far wall, around through the opening ({})", around.value_or("-")));
+
+        const auto room{ right_click(http, 10, 3) };
+        check(reach_is(room, "unreachable", "Цель недоступна\""), fmt::format("reach: another closed room stays unreachable ({})", room.value_or("-")));
+
+        const auto pocket{ right_click(http, 10, 7) };
+        check(reach_is(pocket, "unreachable", "Цель недоступна\""), fmt::format("reach: a pocket open only between two corners is unreachable ({})", pocket.value_or("-")));
+
+        const auto block{ right_click(http, 1, 2) };
+        check(reach_is(block, "blocked", "Цель недоступна: в клетке блок"), fmt::format("reach: a block outside is still rejected ({})", block.value_or("-")));
+
+        const auto chat{ game_reply(client, game_server, "/reach 0 4") };
+        check(contains(chat, "target reachable"), fmt::format("reach: /reach 0 4 in the game ({})", chat.value_or("-")));
+        const auto chat_room{ game_reply(client, game_server, "/reach 10 3") };
+        check(contains(chat_room, "target unreachable"), fmt::format("reach: /reach 10 3 in the game ({})", chat_room.value_or("-")));
+    }
+
+    // Only a check: nothing was sent to the server, you did not move.
+    pump_for(200ms);
+    WalkLog log{};
+    collect(client, game_server, log);
+    check(log.states.empty() && log.other_to_server.empty() && log.set_pos.empty(), "reach: checks never move you or send anything");
+
+    // E2E_MAP_HOLD_SECONDS=N keeps you in BOXTEST for N seconds, e.g. to try
     // the map window in a browser while the fake server answers.
     if (const char* hold{ std::getenv("E2E_MAP_HOLD_SECONDS") }) {
         fmt::print("Holding the map world for {} s\n", hold);
@@ -1445,6 +1629,9 @@ int main(const int argc, char** argv)
 
     // 8d. Map window: cursor -> tile, walking, /goto, /clickwalk.
     run_map_checks(client, game_server);
+
+    // 8e. Right click: is the target reachable (closed box, opened box).
+    run_reach_checks(client, game_server);
 
     // 9. Garbage / truncated / hostile world data must not crash the proxy.
     {

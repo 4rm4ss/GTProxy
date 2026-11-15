@@ -242,16 +242,21 @@ def main():
     log_path = os.path.join(workdir, "e2e-stdout.log")
     log_file = open(log_path, "w")
     wrapper = os.environ.get("E2E_PROXY_WRAPPER", "").split()
-    proxy = subprocess.Popen(wrapper + [proxy_bin], cwd=workdir, stdout=log_file, stderr=subprocess.STDOUT, env=env)
+    proxy = subprocess.Popen(wrapper + [proxy_bin], cwd=workdir, stdin=subprocess.PIPE, stdout=log_file,
+                             stderr=subprocess.STDOUT, env=env)
 
     try:
         deadline = time.time() + 60
         while time.time() < deadline:
-            with open(log_path) as f:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
                 if "Core initialized successfully" in f.read():
                     break
             time.sleep(0.1)
         check(proxy.poll() is None, "proxy starts and stays up")
+
+        # Commands typed into the proxy's own console window.
+        proxy.stdin.write(b"reach 3 4\nhelp\n")
+        proxy.stdin.flush()
 
         # --- server_data.php through the proxy -------------------------------
         check(os.path.exists(proxy_ca), "proxy generated its local CA (resources/ca.pem)")
@@ -320,7 +325,7 @@ def main():
         if UPSTREAM_PORT != 443:
             subprocess.run(["iptables", "-t", "nat", "-D", *NAT_RULE], check=False)
 
-    with open(log_path) as f:
+    with open(log_path, encoding="utf-8", errors="replace") as f:
         log = f.read()
 
     check("Successfully parsed items.dat (version 23, count 21700)" in log, "proxy parsed items.dat sent by the server")
@@ -330,6 +335,13 @@ def main():
     else:
         check("Hash matches, loading cached items.dat" in log, "proxy matched the logon items.dat hash (new name suffix)")
     check("reconnecting to last server" in log, "proxy log shows last-server reconnect")
+    check("Reach check (proxy console): start tile unknown at unknown position, target 3, 4 -> Нет данных" in log,
+          "console 'reach 3 4' before any world: Нет данных, logged with position and tile")
+    check("Proxy console commands: reach <x> <y>" in log, "console 'help' lists the commands")
+    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель доступна (5 steps)" in log,
+          "log has the start position, the tile and the result of a right click")
+    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель недоступна" in log,
+          "log has the same tile as unreachable while the box was closed")
     check("Exception" not in log and "Segmentation" not in log, "no exceptions in proxy log")
     # Reports from the third-party ENet fork (lib/enet submodule) are listed but
     # not counted: signed shift in the range coder and an unaligned header read,

@@ -112,14 +112,92 @@ MapHandler::Result MapHandler::handle_click(const map::Click& click)
 {
     const glm::ivec2 size{ features_.in_world() ? world::World::instance().get_tile_map().get_size() : glm::ivec2{ 0, 0 } };
     const auto target{ map::resolve_click(click, size) };
+
+    // Right click: the reachability check answers for any tile - also
+    // outside the world (rejected) or with no world yet (no data).
+    if (click.button == map::MouseButton::Right && click.view.valid()) {
+        if (target) {
+            return check_reach(target->tile, "map window right click");
+        }
+        if (target.error() == map::ClickError::NoWorld || target.error() == map::ClickError::OutsideWorld) {
+            return check_reach(map::cursor_tile(click.view, click.screen), "map window right click");
+        }
+    }
+
     if (!target) {
         return Result{ false, "click", std::nullopt, fmt::format("Nothing to do: {}.", map::describe(target.error())) };
     }
 
     if (target->action == map::ClickAction::Inspect) {
-        return inspect(target->tile);
+        return check_reach(target->tile, "map window right click");
     }
     return walk_to(target->tile);
+}
+
+MapHandler::Result MapHandler::check_reach(const map::TilePos target, const std::string_view source)
+{
+    Result result{ false, "reach", target, {} };
+
+    // What the check needs: the world's tiles, which blocks collide
+    // (items.dat) and where you are.
+    const auto& world{ world::World::instance() };
+    std::string missing;
+    std::optional<glm::vec2> position;
+    map::Body body{};
+    if (!features_.in_world() || grid().empty()) {
+        missing = "карта мира ещё не получена";
+    }
+    else if (item::ItemDatabase::instance().empty()) {
+        missing = "items.dat не загружен, неизвестно, какие блоки твёрдые";
+    }
+    else if (const auto me{ world.get_local_player().lock() }) {
+        position = glm::vec2{ me->position() };
+        body = map::Body::from_colrect(me->collision());
+    }
+    else {
+        missing = "позиция игрока ещё не получена";
+    }
+
+    const auto reach{ missing.empty() ? map::check_reach(grid(), position, body, target) : map::ReachResult{} };
+    if (missing.empty() && reach.status == map::Reach::NoData) {
+        missing = "позиция игрока вне карты";
+    }
+
+    result.ok = reach.status == map::Reach::Reachable;
+    result.reach = map::code(reach.status);
+    result.message = std::string{ map::headline(reach.status) };
+    if (const auto why{ map::reason(reach.status) }; !why.empty()) {
+        result.message += fmt::format(": {}", why);
+    }
+
+    if (reach.status == map::Reach::NoData) {
+        result.detail = fmt::format("Нет данных: {}.", missing);
+    }
+    else {
+        result.detail = fmt::format("От {}, {} до {}, {}", reach.start->x, reach.start->y, target.x, target.y);
+        if (reach.status == map::Reach::Reachable) {
+            result.detail += fmt::format(": {} {}", reach.steps, map::steps_word(reach.steps));
+        }
+        result.detail += '.';
+        if (const auto tile{ inspect(target) }; tile.ok) {
+            result.detail += ' ';
+            result.detail += tile.message.substr(tile.message.find(": ") + 2);
+        }
+    }
+
+    spdlog::info(
+        "Reach check ({}): start {} at {}, target {}, {} -> {}{}",
+        source,
+        reach.start ? fmt::format("tile {}, {}", reach.start->x, reach.start->y) : std::string{ "tile unknown" },
+        position ? fmt::format("{}, {} px (body {}x{})", position->x, position->y, body.size.x, body.size.y) : std::string{ "unknown position" },
+        target.x,
+        target.y,
+        result.message,
+        reach.status == map::Reach::Reachable
+            ? fmt::format(" ({} steps)", reach.steps)
+            : reach.status == map::Reach::NoData ? fmt::format(" ({})", missing) : std::string{}
+    );
+    return result;
 }
 
 MapHandler::Result MapHandler::walk_to(const map::TilePos tile)
@@ -376,7 +454,7 @@ void MapHandler::serve_window()
         if (result.ok && result.action == "walk") {
             features_.message(fmt::format("`o[map] {}", result.message));
         }
-        request.reply.set_value(map::result_json(result.ok, result.action, result.tile, result.message));
+        request.reply.set_value(map::result_json(result.ok, result.action, result.tile, result.message, result.reach, result.detail));
     }
 }
 

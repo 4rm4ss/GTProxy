@@ -36,6 +36,7 @@ add_executable(GTProxy_tests
     map/test_movement.cpp
     map/test_click.cpp
     map/test_snapshot.cpp
+    map/test_reachability.cpp
     world/test_world_updates.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
@@ -48,7 +49,8 @@ add_executable(GTProxy_tests
     ${CMAKE_SOURCE_DIR}/src/map/movement.cpp
     ${CMAKE_SOURCE_DIR}/src/map/click.cpp
     ${CMAKE_SOURCE_DIR}/src/map/bridge.cpp
-    ${CMAKE_SOURCE_DIR}/src/map/snapshot.cpp)
+    ${CMAKE_SOURCE_DIR}/src/map/snapshot.cpp
+    ${CMAKE_SOURCE_DIR}/src/map/reachability.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src

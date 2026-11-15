@@ -19,7 +19,7 @@ enum class MouseButton : std::uint8_t {
 
 enum class ClickAction : std::uint8_t {
     Walk,       // left button: go to the tile
-    Inspect,    // right button: what is on the tile
+    Inspect,    // right button: can you get there from where you stand
 };
 
 // A click in the map window: where the cursor was and what the canvas showed
@@ -54,6 +54,9 @@ enum class ClickError {
 [[nodiscard]] std::optional<Click> parse_click(const std::multimap<std::string, std::string>& params);
 
 [[nodiscard]] std::optional<ClickAction> action_for(MouseButton button);
+
+// Tile typed by hand ("/goto 12 30", "reach 12 30" in the proxy console).
+[[nodiscard]] std::optional<TilePos> parse_tile(std::string_view x, std::string_view y);
 
 // The click handler's first step: cursor -> tile, button -> action.
 [[nodiscard]] std::expected<ClickTarget, ClickError> resolve_click(const Click& click, glm::ivec2 world_size);

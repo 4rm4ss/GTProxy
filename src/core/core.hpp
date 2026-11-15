@@ -2,6 +2,7 @@
 #include <atomic>
 
 #include "config.hpp"
+#include "console_input.hpp"
 #include "map_server.hpp"
 #include "scheduler.hpp"
 #include "web_server.hpp"
@@ -34,6 +35,9 @@ public:
     [[nodiscard]] Config& get_config() { return config_; }
 
 private:
+    // A command typed into the proxy's console window.
+    void run_console_line(const std::string& line) const;
+
     Config config_;
     std::atomic<bool> running_;
 
@@ -60,5 +64,7 @@ private:
     std::unique_ptr<scripting::ScriptScheduler> script_scheduler_;
     std::unique_ptr<scripting::ScriptEventBridge> script_event_bridge_;
     std::unique_ptr<scripting::ScriptLoader> script_loader_;
+
+    std::unique_ptr<ConsoleInput> console_;
 };
 }

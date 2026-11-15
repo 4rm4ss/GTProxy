@@ -79,6 +79,26 @@ std::optional<Click> parse_click(const std::multimap<std::string, std::string>& 
     return click;
 }
 
+std::optional<TilePos> parse_tile(const std::string_view x, const std::string_view y)
+{
+    const auto integer = [](const std::string_view text) -> std::optional<int> {
+        int value{};
+        const auto* end{ text.data() + text.size() };
+        const auto [ptr, ec]{ std::from_chars(text.data(), end, value) };
+        if (text.empty() || ec != std::errc{} || ptr != end) {
+            return std::nullopt;
+        }
+        return value;
+    };
+
+    const auto tx{ integer(x) };
+    const auto ty{ integer(y) };
+    if (!tx || !ty) {
+        return std::nullopt;
+    }
+    return TilePos{ *tx, *ty };
+}
+
 std::optional<ClickAction> action_for(const MouseButton button)
 {
     switch (button) {
