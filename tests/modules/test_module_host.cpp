@@ -79,12 +79,23 @@ gtproxy.command("reach", "check a tile", function(args, ctx)
     ctx.reply(ctx.source .. " " .. r.message)
 end)
 assert(dofile == nil and loadfile == nil, "no file access")
-assert(gtproxy.api_version == 3)
+assert(gtproxy.api_version == 4)
 assert(gtproxy.module.id == "reach")
 -- Wall clock (modules have no os library).
 assert(math.type(gtproxy.time()) == "integer" and gtproxy.time() > 1700000000)
 assert(gtproxy.date():match("^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d$"), gtproxy.date())
 assert(gtproxy.date(0):match("^19[67]%d%-"), gtproxy.date(0))
+-- (4) Latin text for the game's font.
+assert(gtproxy.text.latin("Подтверждено — 90 WL × 2 «ок»") == 'Podtverzhdeno - 90 WL x 2 "ok"', gtproxy.text.latin("Подтверждено — 90 WL × 2 «ок»"))
+assert(gtproxy.text.latin("Щука, Ёж") == "Shchuka, Yozh")
+-- (4) Abilities, keys, the map window.
+local a = gtproxy.player.abilities({ speed = 2, double_jump = true })
+assert(a.allowed and a.speed == 2 and a.double_jump and a.gravity == 1, "abilities")
+assert(not pcall(gtproxy.player.abilities, { speed = "fast" }), "abilities: numbers only")
+assert(gtproxy.input.key_down("alt") == false)
+assert(not pcall(gtproxy.input.key_down, "f12"), "key_down: alt, ctrl, shift")
+assert(gtproxy.map.window() == false)
+assert(gtproxy.world.info().official == false)
 assert(gtproxy.world.info().me.tile_x == 5)
 )" };
 }

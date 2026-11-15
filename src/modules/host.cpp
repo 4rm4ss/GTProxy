@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <ctime>
 #include <fstream>
@@ -231,6 +232,77 @@ std::string as_text(const sol::object& value)
     const sol::protected_function to_string{ lua["tostring"] };
     const sol::protected_function_result text{ to_string(value) };
     return text.valid() ? text.get<std::string>() : std::string{ "?" };
+}
+
+// Cyrillic in Latin letters, a few signs made plain, anything else the
+// game's font lacks as '?'.
+std::string latin(const std::string_view text)
+{
+    static constexpr std::array<std::string_view, 32> LOWER{
+        "a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p",
+        "r", "s", "t", "u", "f", "kh", "ts", "ch", "sh", "shch", "", "y", "", "e", "yu", "ya",
+    };
+    std::string out;
+    for (std::size_t i{ 0 }; i < text.size();) {
+        const auto c{ static_cast<unsigned char>(text[i]) };
+        if (c < 0x80) {
+            out += static_cast<char>(c);
+            ++i;
+            continue;
+        }
+        std::uint32_t code{ 0 };
+        std::size_t length{ 1 };
+        if ((c & 0xE0) == 0xC0 && i + 1 < text.size()) {
+            code = ((c & 0x1F) << 6) | (static_cast<unsigned char>(text[i + 1]) & 0x3F);
+            length = 2;
+        }
+        else if ((c & 0xF0) == 0xE0 && i + 2 < text.size()) {
+            code = ((c & 0x0F) << 12) | ((static_cast<unsigned char>(text[i + 1]) & 0x3F) << 6) | (static_cast<unsigned char>(text[i + 2]) & 0x3F);
+            length = 3;
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            length = 4;
+        }
+        i += length;
+        if (code >= 0x0430 && code <= 0x044F) {
+            out += LOWER[code - 0x0430];
+        }
+        else if (code >= 0x0410 && code <= 0x042F) {
+            std::string letter{ LOWER[code - 0x0410] };
+            if (!letter.empty()) {
+                letter[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(letter[0])));
+            }
+            out += letter;
+        }
+        else if (code == 0x0451) {
+            out += "yo";
+        }
+        else if (code == 0x0401) {
+            out += "Yo";
+        }
+        else if (code == 0x2014 || code == 0x2013) {
+            out += "-";
+        }
+        else if (code == 0x00AB || code == 0x00BB || code == 0x201C || code == 0x201D) {
+            out += '"';
+        }
+        else if (code == 0x00D7) {
+            out += "x";
+        }
+        else if (code == 0x2192) {
+            out += "->";
+        }
+        else if (code == 0x2026) {
+            out += "...";
+        }
+        else if (code == 0x00B7) {
+            out += "-";
+        }
+        else {
+            out += '?';
+        }
+    }
+    return out;
 }
 
 int whole_number(const double value, const char* what)
@@ -516,7 +588,7 @@ std::optional<Overlay> overlay_from(const sol::object& value)
     return overlay;
 }
 
-// The `gtproxy` table: everything a module can use (API version 3).
+// The `gtproxy` table: everything a module can use (API version 4).
 //
 // Every function handed to Lua captures plain pointers only: sol2 frees
 // captured objects with destructors (std::string ...) at the wrong place
@@ -699,6 +771,9 @@ private:
         sol::table text{ lua.create_table() };
         text.set_function("strip_colors", [](const std::string& value) { return core::features::strip_colors(value); });
         text.set_function("sanitize", [](const std::string& value) { return core::features::sanitize(value); });
+        // (4) Text the game's font can show: Cyrillic written in Latin letters
+        // ("Подтверждено" -> "Podtverzhdeno"), dashes and quotes plain.
+        text.set_function("latin", [](const std::string& value) { return latin(value); });
         api["text"] = text;
     }
 
@@ -725,6 +800,7 @@ private:
             info["real_name"] = view.real_name;
             info["server"] = view.server;
             info["user_id"] = view.user_id;
+            info["official"] = view.official;
             if (view.me) {
                 info["me"] = view_lua.create_table_with(
                     "x", view.me->x,
@@ -996,7 +1072,71 @@ private:
             }
             return services->capture_wheel(module->manifest.id, value);
         });
+        // (4) gtproxy.input.key_down("alt" | "ctrl" | "shift"): held now (Windows).
+        input.set_function("key_down", [services](const std::string& key) {
+            if (key != "alt" && key != "ctrl" && key != "shift") {
+                throw std::runtime_error{ fmt::format("gtproxy.input.key_down: '{}' must be \"alt\", \"ctrl\" or \"shift\"", key) };
+            }
+            return services->key_down(key);
+        });
         api["input"] = input;
+
+        // (4) Your character on your own server: gtproxy.player.abilities()
+        // reads, gtproxy.player.abilities({ speed = 2, ... }) changes those given.
+        sol::table player{ lua.create_table() };
+        player.set_function("abilities", [services](sol::this_state state, const sol::object& changes) {
+            auto view{ services->abilities() };
+            if (changes.get_type() == sol::type::table) {
+                const auto t{ changes.as<sol::table>() };
+                auto a{ view.abilities };
+                const auto number = [&](const char* name, const float current) {
+                    const sol::object value{ t[name] };
+                    if (value.get_type() == sol::type::lua_nil) {
+                        return current;
+                    }
+                    if (value.get_type() != sol::type::number || !std::isfinite(value.as<double>())) {
+                        throw std::runtime_error{ fmt::format("gtproxy.player.abilities: {} must be a number", name) };
+                    }
+                    return static_cast<float>(value.as<double>());
+                };
+                const auto flag = [&](const char* name, const bool current) {
+                    const sol::object value{ t[name] };
+                    if (value.get_type() == sol::type::lua_nil) {
+                        return current;
+                    }
+                    if (value.get_type() != sol::type::boolean) {
+                        throw std::runtime_error{ fmt::format("gtproxy.player.abilities: {} must be true or false", name) };
+                    }
+                    return value.as<bool>();
+                };
+                a.speed = number("speed", a.speed);
+                a.gravity = number("gravity", a.gravity);
+                a.acceleration = number("acceleration", a.acceleration);
+                a.water_speed = number("water_speed", a.water_speed);
+                a.range = static_cast<int>(number("range", static_cast<float>(a.range)));
+                a.double_jump = flag("double_jump", a.double_jump);
+                a.noclip = flag("noclip", a.noclip);
+                a.god = flag("god", a.god);
+                view = services->set_abilities(a);
+            }
+            sol::state_view view_lua{ state };
+            const auto& a{ view.abilities };
+            sol::table out{ view_lua.create_table() };
+            out["allowed"] = view.allowed;
+            out["why"] = view.why;
+            out["state_known"] = view.state_known;
+            out["state_made"] = view.state_made;
+            out["speed"] = static_cast<double>(a.speed);
+            out["gravity"] = static_cast<double>(a.gravity);
+            out["acceleration"] = static_cast<double>(a.acceleration);
+            out["water_speed"] = static_cast<double>(a.water_speed);
+            out["double_jump"] = a.double_jump;
+            out["noclip"] = a.noclip;
+            out["range"] = a.range;
+            out["god"] = a.god;
+            return out;
+        });
+        api["player"] = player;
 
         sol::table menu{ lua.create_table() };
         menu.set_function("add", [module](const sol::object& value) {
@@ -1074,6 +1214,8 @@ private:
             }
             return result;
         });
+        // (4) Whether the map window is on (config.json map.enabled).
+        map.set_function("window", [services] { return services->map_window(); });
         map.set_function("pick", [module, services](const sol::object& label) {
             services->request_pick(module->manifest.id, label.get_type() == sol::type::string ? label.as<std::string>() : std::string{});
         });

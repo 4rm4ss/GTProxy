@@ -5,5 +5,6 @@
   "gravity": false,
   "jump_height": 3,
   "air_jumps": 1,
-  "doors": "access"
+  "doors": "access",
+  "bind": "alt"
 }

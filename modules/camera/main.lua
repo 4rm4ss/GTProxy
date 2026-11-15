@@ -40,11 +40,13 @@ local function message(text)
 end
 
 -- Sends OnZoomCamera(zoom, ms) to your game; false when not in a world.
-local function send(zoom, ms)
-    if not gtproxy.world.info().in_world then
+-- own: addressed to your netID instead of -1 (some games only obey that).
+local function send(zoom, ms, own)
+    local info = gtproxy.world.info()
+    if not info.in_world then
         return false
     end
-    gtproxy.game.call("OnZoomCamera", -1, gtproxy.f32(zoom), gtproxy.i32(ms))
+    gtproxy.game.call("OnZoomCamera", own and info.net_id or -1, gtproxy.f32(zoom), gtproxy.i32(ms))
     return true
 end
 
@@ -113,7 +115,8 @@ end)
 -- /zoom test: which values (if any) move the camera in your game. The
 -- game may ignore OnZoomCamera; then the wheel must stay the game's.
 local TEST_STEPS = {
-    { 0.5, 300 }, { 2, 300 }, { 0.1, 1000 }, { 10, 1000 }, { 100, 1000 }, { 10000, 1000 }, { 1, 300 },
+    { 0.5, 300 }, { 2, 300 }, { 0.1, 1000 }, { 10, 1000 }, { 100, 1000 }, { 10000, 1000 },
+    { 0.5, 300, true }, { 10, 1000, true }, { 10000, 1000, true }, { 1, 300 },
 }
 local test_timer = nil
 
@@ -132,8 +135,9 @@ local function zoom_test(reply)
             message(string.format("`oZoom test done. Tell me the step number where the camera moved. If it never moved, your game ignores OnZoomCamera: keep the wheel `woff`` (%szoom wheel off) - the zoom limit is inside the game client.", P))
             return
         end
-        send(entry[1], entry[2])
-        message(string.format("`oZoom test `w%d/%d``: OnZoomCamera(`w%s``, %d ms) - did the camera move?", step, #TEST_STEPS, number_text(entry[1]), entry[2]))
+        send(entry[1], entry[2], entry[3])
+        message(string.format("`oZoom test `w%d/%d``: OnZoomCamera(`w%s``, %d ms)%s - did the camera move?", step, #TEST_STEPS,
+            number_text(entry[1]), entry[2], entry[3] and " to your netID" or ""))
         test_timer = gtproxy.after(3000, next_step)
     end
     next_step()
@@ -217,6 +221,9 @@ local function camera_page()
         :button("zoom_apply", "Zoom to this value")
         :button("zoom_reset", "Back to normal")
         :spacer()
+        :small("`oThe game's own zoom limit is inside the game. The proxy can only ask the game to zoom, the way a server does (OnZoomCamera). The test shows whether your game obeys: watch the camera and note the step that moved it.")
+        :button("zoom_test", "Zoom test (about 30 seconds)")
+        :spacer()
         :button("page_main", "<< Menu")
     return d:finish("gtproxy_camera", "Save")
 end
@@ -268,6 +275,8 @@ gtproxy.on("dialog", function(e)
         cmd_zoom({ sanitize(e.values.zoom_value or "") }, message)
     elseif button == "zoom_reset" then
         reset(message)
+    elseif button == "zoom_test" then
+        zoom_test(message)
     elseif (button == "cam_save" or button == "") and e.values.wheel_step then
         local step = tonumber(sanitize(e.values.wheel_step or ""))
         local low = tonumber(sanitize(e.values.min_zoom or ""))

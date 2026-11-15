@@ -46,7 +46,7 @@ public:
     {
         const auto& url{ map_.window_url() };
         if (!url) {
-            session_.message("`4Oops: ``The map window is off or its port is busy (see the proxy log, config.json \"map\").");
+            session_.message("`oThe map window is off: everything is in the /proxy menu. To use it anyway, set \"map\": { \"enabled\": true } in config.json and restart the proxy.");
             return Result::Failed;
         }
 

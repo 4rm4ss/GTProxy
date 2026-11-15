@@ -10,6 +10,7 @@
 #include "handlers/connection_handler.hpp"
 #include "handlers/inventory_handler.hpp"
 #include "handlers/map_handler.hpp"
+#include "handlers/player_mods.hpp"
 #include "handlers/forwarding_handler.hpp"
 #include "handlers/session_handler.hpp"
 #include "handlers/world_handler.hpp"
@@ -59,6 +60,7 @@ private:
     std::unique_ptr<handlers::SessionHandler> session_handler_;
     std::unique_ptr<handlers::InventoryHandler> inventory_handler_;
     std::unique_ptr<handlers::MapHandler> map_handler_;
+    std::unique_ptr<handlers::PlayerMods> player_mods_;
     std::unique_ptr<command::CommandHandler> command_handler_;
 
     std::unique_ptr<scripting::LuaEngine> script_engine_;

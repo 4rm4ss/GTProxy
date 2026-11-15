@@ -30,6 +30,7 @@ add_executable(GTProxy_tests
     core/test_session_log.cpp
     core/test_features.cpp
     core/test_inventory.cpp
+    core/test_player_state.cpp
     network/test_enet_packet.cpp
     map/test_coords.cpp
     map/test_grid.cpp
@@ -49,6 +50,7 @@ add_executable(GTProxy_tests
     ${CMAKE_SOURCE_DIR}/src/core/session_log.cpp
     ${CMAKE_SOURCE_DIR}/src/core/features.cpp
     ${CMAKE_SOURCE_DIR}/src/core/inventory.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/handlers/player_state.cpp
     ${CMAKE_SOURCE_DIR}/src/map/grid.cpp
     ${CMAKE_SOURCE_DIR}/src/map/pathfinder.cpp
     ${CMAKE_SOURCE_DIR}/src/map/movement.cpp

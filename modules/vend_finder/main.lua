@@ -1,4 +1,4 @@
--- Vending finder (module API 3, see docs/modules.md).
+-- Vending finder (module API 4, see docs/modules.md).
 --
 -- /pvend <name|ID>: the world's vending machines that sell an item, cheapest
 -- per item first ("3 for 1 WL" and "2 WL for 4" are compared per item, the
@@ -291,6 +291,8 @@ local function finish(status, detail)
     deal.status = status
     deal.detail = detail
     gtproxy.log.info(string.format("vend: %s x%d at %d,%d: %s%s", game_name(deal.item), deal.amount, deal.x, deal.y, status, detail and (" - " .. detail) or ""))
+    gtproxy.game.message(string.format("%sVending: ``%s x%d: %s", status == "Подтверждено" and "`2" or "`4",
+        gtproxy.text.sanitize(game_name(deal.item)), deal.amount, gtproxy.text.sanitize(gtproxy.text.latin(status .. (detail and (" - " .. detail) or "")))))
     refresh()
 end
 
@@ -473,12 +475,10 @@ local function wanted_from(values)
     return math.floor(n)
 end
 
-gtproxy.on("panel", function(e)
-    if e.panel ~= PANEL then
-        return
-    end
-    local a = e.action
-    if e.values and e.values.qty and wanted_from(e.values) then
+-- One action of the tab or the /proxy page: { ok, message }.
+local function act(a, row, value, values)
+    local e = { row = row, value = value, values = values or {} }
+    if e.values.qty and wanted_from(e.values) then
         qty = wanted_from(e.values)
     end
 
@@ -580,7 +580,133 @@ gtproxy.on("panel", function(e)
         end
         return { ok = true, message = "Отменено" }
     end
+end
+
+gtproxy.on("panel", function(e)
+    if e.panel ~= PANEL then
+        return
+    end
+    return act(e.action, e.row, e.value, e.values)
 end)
+
+---------------------------------------------------------------------------
+-- The Vending page of /proxy (the same actions as the tab)
+---------------------------------------------------------------------------
+
+local latin = gtproxy.text.latin
+local sanitize = gtproxy.text.sanitize
+local ICON_VEND = 2978      -- Vending Machine
+
+local function vend_page()
+    local d = gtproxy.dialog():header("Vending machines", ICON_VEND)
+    local world = world_name()
+    if not world then
+        return d:small("`oYou are not in a world."):button("page_main", "<< Menu"):finish("gtproxy_vend")
+    end
+    local list = offers()
+    d:small(string.format("`o%d machine(s)%s. Cheapest per item first; equal price: the shorter way first.",
+        #list, query ~= "" and (" with `w" .. sanitize(query) .. "``") or ""))
+    d:input("vf_query", "Item name or ID (empty = all):", query, 30):button("vf_search", "Search")
+    d:spacer()
+    for i, offer in ipairs(list) do
+        if i > 10 then
+            d:small(string.format("`o... %d more: search for the item.", #list - 10))
+            break
+        end
+        local label
+        if offer.item == 0 then
+            label = string.format("Empty machine at %d, %d", offer.x, offer.y)
+        else
+            label = string.format("%s%s at %d,%d: %s%s, stock %s, %s",
+                offer.key == selected and "`2> " or "", sanitize(game_name(offer.item)), offer.x, offer.y,
+                offer.pack and price.pack_text(offer.pack) or "price unknown",
+                offer.pack and (" (" .. price.number(price.per_item(offer.pack)) .. " each)") or "",
+                offer.stock and tostring(offer.stock) or "unknown",
+                offer.steps >= 0 and (offer.steps .. " steps") or "no way")
+        end
+        d:button("vf_pick_" .. offer.x .. "_" .. offer.y, label .. (offer.key == selected and "``" or ""))
+    end
+    if selected then
+        local offer = find_offer(selected)
+        if offer then
+            d:spacer():section(string.format("Selected: %s at %d, %d", sanitize(game_name(offer.item)), offer.x, offer.y), offer.item ~= 0 and offer.item or ICON_VEND)
+            d:input("qty", "Amount:", tostring(qty), 7)
+            for _, n in ipairs(presets()) do
+                d:button("vf_qty_" .. n, tostring(n))
+            end
+            d:button("vf_buy", "Buy (shows amount and price first)")
+                :button("vf_check", "Check stock")
+                :button("vf_go", "Walk next to it")
+        end
+    end
+    if deal then
+        d:spacer()
+        for _, line in ipairs(deal_lines()) do
+            d:small("`o" .. sanitize(latin(line)))
+        end
+        if deal.stage == "confirm" then
+            d:button("vf_confirm", "`2Confirm purchase``"):button("vf_cancel", "Cancel")
+        end
+    end
+    return d:spacer():button("vf_refresh", "Refresh"):button("page_main", "<< Menu"):finish("gtproxy_vend")
+end
+
+local function show_vend_page()
+    gtproxy.game.dialog(vend_page())
+end
+
+local function say_result(result)
+    if result and result.message and result.message ~= "" then
+        gtproxy.game.message((result.ok and "`o" or "`4") .. "Vending: ``" .. sanitize(latin(result.message)))
+    end
+end
+
+gtproxy.on("dialog", function(e)
+    if e.button == "page_vending" then
+        show_vend_page()
+        return
+    end
+    if e.name ~= "gtproxy_vend" or e.frame then
+        return
+    end
+    local values = { qty = e.values.qty }
+    local b = e.button
+    local x, y = b:match("^vf_pick_(%-?%d+)_(%-?%d+)$")
+    if x then
+        say_result(act("select", x .. "," .. y, nil, values))
+    elseif b == "vf_search" then
+        act("search", nil, e.values.vf_query or "", values)
+    elseif b:match("^vf_qty_%d+$") then
+        act("preset", nil, b:match("%d+$"), {})
+    elseif b == "vf_buy" then
+        say_result(act("buy", nil, nil, values))
+    elseif b == "vf_check" then
+        say_result(act("check", selected, nil, values))
+    elseif b == "vf_confirm" then
+        say_result(act("confirm", nil, nil, values))
+    elseif b == "vf_cancel" then
+        say_result(act("cancel", nil, nil, values))
+    elseif b == "vf_go" then
+        local offer = selected and find_offer(selected)
+        if offer and offer.stand then
+            local walk = gtproxy.walk.to(offer.stand.x, offer.stand.y)
+            gtproxy.game.message((walk.ok and "`o" or "`4") .. "[walk] ``" .. sanitize(walk.message))
+            return
+        end
+        gtproxy.game.message("`4Vending: ``no way to that machine.")
+    elseif b ~= "vf_refresh" and b ~= "" then
+        return
+    end
+    show_vend_page()
+end)
+
+gtproxy.menu.add({
+    title = "Vending",
+    icon = ICON_VEND,
+    button = "page_vending",
+    label = "Cheapest machines, stock, checked purchase",
+    order = 40,
+})
 
 ---------------------------------------------------------------------------
 -- Leaving the world, changes in it

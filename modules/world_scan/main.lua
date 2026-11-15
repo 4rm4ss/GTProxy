@@ -1,4 +1,4 @@
--- World scan (module API 3, see docs/modules.md).
+-- World scan (module API 4, see docs/modules.md).
 --
 -- /growscan [name|ID]: every item of the world in a table (map window tab
 -- "Скан мира"): blocks (foreground), backgrounds and what lies on the ground
@@ -272,6 +272,92 @@ gtproxy.on("panel", function(e)
         end
     end
 end)
+
+---------------------------------------------------------------------------
+-- The World scan page of /proxy
+---------------------------------------------------------------------------
+
+local latin = gtproxy.text.latin
+local sanitize = gtproxy.text.sanitize
+local ICON_SCAN = 2         -- Dirt
+
+local function scan_page()
+    local d = gtproxy.dialog():header("World scan", ICON_SCAN)
+    local name = world()
+    if not name then
+        return d:small("`oYou are not in a world."):button("page_main", "<< Menu"):finish("gtproxy_scan")
+    end
+    local info = gtproxy.world.info()
+    local rows, totals = scan.count(gtproxy.world.summary(), gtproxy.world.objects())
+    d:small(string.format("`o%s, %dx%d: `w%d`` kinds, `w%d`` blocks, `w%d`` backgrounds.", sanitize(name), info.width, info.height, totals.kinds, totals.fg, totals.bg))
+    d:small(string.format("`oOn the ground: `w%d`` stacks, `w%d`` pieces; gems `w%s``%s.", totals.stacks, totals.pieces,
+        totals.gems == nil and "unknown" or tostring(totals.gems), totals.gem_stacks and string.format(" (%d stacks)", totals.gem_stacks) or ""))
+    d:input("ws_query", "Item name or ID (empty = all):", query, 30):button("ws_search", "Search")
+    d:spacer()
+    local shown = 0
+    for _, r in ipairs(rows) do
+        if scan.matches(query, r.id, item_name(r.id)) then
+            shown = shown + 1
+            if shown > 15 then
+                d:small("`o... more: search for an item.")
+                break
+            end
+            d:item(string.format("`w%s`` (%d): blocks %d, background %d, ground %d stacks / %d pcs",
+                sanitize(game_name(r.id)), r.id, r.fg, r.bg, r.stacks, r.pieces), r.id)
+        end
+    end
+    if shown == 0 then
+        d:small("`oNo such item in this world.")
+    end
+    d:spacer():small(string.format("`oItem journal: %s, %d entries.", tracking and "`2on``" or "`4off``", #journal))
+    for i = #journal, math.max(1, #journal - 7), -1 do
+        local j = journal[i]
+        d:small(string.format("`o%s %d,%d: %s", j.time, j.x, j.y, sanitize(latin(j.text))))
+    end
+    return d:button("ws_track", tracking and "Stop the journal" or "Start the journal")
+        :button("ws_clear", "Clear the journal")
+        :button("ws_render", "Save a PNG of the world")
+        :spacer():button("ws_refresh", "Refresh"):button("page_main", "<< Menu"):finish("gtproxy_scan")
+end
+
+local function show_scan_page()
+    gtproxy.game.dialog(scan_page())
+end
+
+gtproxy.on("dialog", function(e)
+    if e.button == "page_scan" then
+        show_scan_page()
+        return
+    end
+    if e.name ~= "gtproxy_scan" or e.frame then
+        return
+    end
+    local b = e.button
+    if b == "ws_search" then
+        query = e.values.ws_query or ""
+        refresh_scan()
+    elseif b == "ws_track" then
+        tracking = not tracking
+        refresh_journal()
+    elseif b == "ws_clear" then
+        journal = {}
+        refresh_journal()
+    elseif b == "ws_render" then
+        local path, why = render()
+        gtproxy.game.message(path and ("`oSaved `w" .. sanitize(path) .. "``") or ("`4No PNG: ``" .. sanitize(why)))
+    elseif b ~= "ws_refresh" and b ~= "" then
+        return
+    end
+    show_scan_page()
+end)
+
+gtproxy.menu.add({
+    title = "World scan",
+    icon = ICON_SCAN,
+    button = "page_scan",
+    label = "Everything in the world, item journal, PNG",
+    order = 50,
+})
 
 ---------------------------------------------------------------------------
 -- Commands

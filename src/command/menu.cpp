@@ -90,7 +90,9 @@ std::string Menu::main_page() const
     }
 
     text += "add_spacer|small|\n";
-    text += button("map", "Map window (click a tile to walk there)");
+    if (map_window_) {
+        text += button("map", "Map window (browser)");
+    }
     text += button("commands", "All proxy commands");
     return text + end("gtproxy_menu");
 }

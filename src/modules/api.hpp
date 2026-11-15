@@ -38,6 +38,27 @@ struct WorldView {
     std::optional<PlayerView> me;
     std::string server;         // the game server in config.json (for data per server)
     std::uint32_t user_id{ 0 }; // yours, once spawned
+    bool official{ false };     // (4) one of Growtopia's own servers
+};
+
+// (4) Your character's abilities on your own server (core::handlers::PlayerMods).
+struct Abilities {
+    float speed{ 1.0f };
+    float gravity{ 1.0f };
+    float acceleration{ 1.0f };
+    float water_speed{ 1.0f };
+    bool double_jump{ false };
+    bool noclip{ false };
+    int range{ 0 };
+    bool god{ false };
+};
+
+struct AbilitiesView {
+    bool allowed{ false };      // false on Growtopia's own servers
+    std::string why;
+    bool state_known{ false };  // the server's character state was seen
+    bool state_made{ false };   // none came: the usual values were used
+    Abilities abilities;
 };
 
 struct PlayerInfo {
@@ -274,5 +295,13 @@ public:
     virtual void request_pick(const std::string& module_id, const std::string& label) = 0;
     // A PNG of the map as the window shows it; the file's path, or "" and why.
     virtual std::string render_png(std::string& error) = 0;
+
+    // API 4
+    [[nodiscard]] virtual AbilitiesView abilities() const = 0;
+    virtual AbilitiesView set_abilities(const Abilities& abilities) = 0;
+    // A key held down now: "alt", "ctrl", "shift" (Windows only; false elsewhere).
+    [[nodiscard]] virtual bool key_down(std::string_view key) const = 0;
+    // The map window is switched on (config.json map.enabled).
+    [[nodiscard]] virtual bool map_window() const = 0;
 };
 }

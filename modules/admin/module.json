@@ -1,0 +1,19 @@
+{
+  "id": "admin",
+  "version": "1.0.0",
+  "api_version": 4,
+  "main": "main.lua",
+  "name": "Admin mode",
+  "description": "On your own server: walking speed, jump height (gravity), double jump, walking through blocks, longer reach and god mode for your character, set from the Admin page of /proxy or /speed, /jump, /dj, /noclip, /range, /god. Refused on Growtopia's own servers.",
+  "author": "GTProxy",
+  "settings": {
+    "speed": 1,
+    "gravity": 1,
+    "acceleration": 1,
+    "water_speed": 1,
+    "double_jump": false,
+    "noclip": false,
+    "range": 0,
+    "god": false
+  }
+}

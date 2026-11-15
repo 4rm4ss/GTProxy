@@ -1,10 +1,10 @@
 {
   "id": "vend_finder",
-  "version": "1.0.0",
-  "api_version": 3,
+  "version": "1.1.0",
+  "api_version": 4,
   "main": "main.lua",
   "name": "Vending finder",
-  "description": "/pvend <name|ID>: the world's vending machines with an item, cheapest per item first (\"3 for 1 WL\" and \"2 WL for 4\" compared per item), stock, way to a free tile next to it, and a checked purchase. Map window tab \"Вендинги\".",
+  "description": "/pvend <name|ID>: the world's vending machines with an item, cheapest per item first (\"3 for 1 WL\" and \"2 WL for 4\" compared per item), stock, way to a free tile next to it, and a checked purchase. The Vending page of /proxy (and the map window tab \"Вендинги\" when the window is on).",
   "author": "GTProxy",
   "settings": {
     "presets": "1,10,50",

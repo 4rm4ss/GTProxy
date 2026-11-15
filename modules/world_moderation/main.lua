@@ -1,4 +1,4 @@
--- World moderation (module API 3, see docs/modules.md).
+-- World moderation (module API 4, see docs/modules.md).
 --
 -- The players of the world in the map window's tab "Модерация": choose one,
 -- several, or everyone inside a zone picked on the map, and pull, kick or
@@ -111,6 +111,10 @@ local function log_entry(action, target, result, detail, source)
     end
     gtproxy.log.info(string.format("moderation %s: %s %s -> %s%s (%s)", entry.world, entry.action, target, result,
         detail and detail ~= "" and (": " .. detail) or "", entry.source))
+    if result ~= "Проба (dry run)" then
+        gtproxy.game.message(string.format("%sModeration: ``%s", result == "Подтверждено" and "`2" or "`o",
+            gtproxy.text.sanitize(gtproxy.text.latin(string.format("%s %s - %s%s", entry.action, target, result, detail and detail ~= "" and (" (" .. detail .. ")") or "")))))
+    end
 end
 
 ---------------------------------------------------------------------------
@@ -284,11 +288,36 @@ local function stop_all(why)
     end
 end
 
+-- Wrench mode: the player's window you opened yourself (the wrench on a
+-- player) does the chosen action at once - asked again and pressed through
+-- the same checked steps as any other action, so it gets its own result.
+local function wrench_mode(markup)
+    local mode = gtproxy.setting("wrench_mode")
+    if mode ~= "pull" and mode ~= "kick" and mode ~= "ban" then
+        return
+    end
+    local d = gtproxy.ui.parse_dialog(markup)
+    local net = tonumber(d.embed.netID or d.embed.netid or "")
+    local p = net and player_by_net(net)
+    if not p or p.is_local or not d.name:lower():find("popup", 1, true) then
+        return
+    end
+    if not rules.button_for(d, mode) then
+        gtproxy.game.message(string.format("`4Wrench mode: ``no %s button for you in %s's window (no rights).", mode, gtproxy.text.sanitize(clean(p.name))))
+        return
+    end
+    new_batch(mode, { { net_id = p.net_id, user_id = p.user_id, name = clean(p.name) } }, { source = "гаечный ключ" })
+    return "cancel"
+end
+
 -- The player's or the lock's window the server sent for our step.
 gtproxy.hook_call("OnDialogRequest", function(call)
     local o = op
-    if not o or o.stage ~= "window" or type(call.args[1]) ~= "string" then
+    if type(call.args[1]) ~= "string" then
         return
+    end
+    if not o or o.stage ~= "window" then
+        return wrench_mode(call.args[1])
     end
     local d = gtproxy.ui.parse_dialog(call.args[1])
     local b, item = o.batch, o.item
@@ -365,6 +394,9 @@ gtproxy.hook_call("OnDialogRequest", function(call)
 end)
 
 gtproxy.on("player_leave", function(e)
+    if gtproxy.setting("notices") and e.name ~= "" then
+        gtproxy.game.message(string.format("`o<< `w%s`` left (user ID %d)", gtproxy.text.sanitize(clean(e.name)), e.user_id))
+    end
     selected[e.net_id] = nil
     checked_entry[e.net_id] = nil
     local o = op
@@ -451,6 +483,9 @@ end
 gtproxy.on("player_join", function(e)
     if e.is_local then
         return
+    end
+    if gtproxy.setting("notices") then
+        gtproxy.game.message(string.format("`o>> `w%s`` came in (user ID %d, netID %d)", gtproxy.text.sanitize(clean(e.name)), e.user_id, e.net_id))
     end
     -- After the world has the player (position, IDs).
     gtproxy.after(300, function()
@@ -694,11 +729,9 @@ gtproxy.on("pick", function(e)
     return { ok = false, message = "Ничего не выбиралось" }
 end)
 
-gtproxy.on("panel", function(e)
-    if e.panel ~= PANEL then
-        return
-    end
-    local a = e.action
+-- One action of the tab or the /proxy page: { ok, message }.
+local function act(a, row)
+    local e = { row = row }
     if a == "select" then
         local net = tonumber(e.row)
         local p = net and player_by_net(net)
@@ -782,7 +815,219 @@ gtproxy.on("panel", function(e)
         refresh()
         return { ok = true, message = "Очередь остановлена (текущий шаг доведётся до результата)" }
     end
+end
+
+gtproxy.on("panel", function(e)
+    if e.panel ~= PANEL then
+        return
+    end
+    return act(e.action, e.row)
 end)
+
+---------------------------------------------------------------------------
+-- The Moderation page of /proxy
+---------------------------------------------------------------------------
+
+local latin = gtproxy.text.latin
+local sanitize = gtproxy.text.sanitize
+local ICON_MOD = 32         -- Wrench
+local shown_player = nil    -- netID of the player page
+
+local function say(result)
+    if result and result.message and result.message ~= "" then
+        gtproxy.game.message((result.ok and "`o" or "`4") .. "Moderation: ``" .. sanitize(latin(result.message)))
+    end
+end
+
+local function confirm_part(d)
+    if not plan then
+        return false
+    end
+    local names = {}
+    for _, t in ipairs(plan.targets) do
+        names[#names + 1] = sanitize(player_text(t))
+    end
+    d:section(string.format("%s: %s?", NAMES[plan.action] and latin(NAMES[plan.action]) or plan.action, table.concat(names, ", ")), ICON_MOD)
+    d:small("`oThe server checks your rights; each player gets their own result.")
+    d:button("wm_confirm", "`2Confirm``"):button("wm_cancel", "Cancel")
+    return true
+end
+
+local function mod_page()
+    local d = gtproxy.dialog():header("World moderation", ICON_MOD)
+    local w = world()
+    if not w then
+        return d:small("`oYou are not in a world."):button("page_main", "<< Menu"):finish("gtproxy_mod")
+    end
+    if confirm_part(d) then
+        return d:spacer():button("page_moderation", "<< Back"):finish("gtproxy_mod")
+    end
+
+    if shown_player then
+        local p = player_by_net(shown_player)
+        if p then
+            d:section(string.format("%s (user ID %d, netID %d) at %d, %d", sanitize(clean(p.name)), p.user_id, p.net_id, p.tile_x, p.tile_y), 18)
+            if last_result[p.net_id] then
+                d:small("`oLast: " .. sanitize(latin(last_result[p.net_id])))
+            end
+            d:button("wm_do_pull", "Pull"):button("wm_do_kick", "Kick"):button("wm_do_ban", "Ban (world ban)")
+                :button("wm_walk", "Walk to " .. sanitize(clean(p.name)))
+            local lock = lock_info()
+            if lock then
+                d:button("wm_do_give", string.format("Give access to the lock at %d, %d", lock.x, lock.y))
+                    :button("wm_do_take", string.format("Take access to the lock at %d, %d", lock.x, lock.y))
+            end
+            return d:spacer():button("wm_back", "<< Players"):finish("gtproxy_mod")
+        end
+        shown_player = nil
+    end
+
+    local players = gtproxy.world.players()
+    d:small(string.format("`o%s: %d player(s). Actions use the player's own window: the server checks your rights.", sanitize(w), #players))
+    for _, p in ipairs(players) do
+        if not p.is_local then
+            d:button("wm_player_" .. p.net_id, string.format("%s (#%d) at %d,%d%s", sanitize(clean(p.name)), p.user_id, p.tile_x, p.tile_y,
+                last_result[p.net_id] and (" - " .. sanitize(latin(last_result[p.net_id]))) or ""))
+        end
+    end
+    if #players <= 1 then
+        d:small("`oNobody else is here.")
+    else
+        d:button("wm_all_pull", "Pull everyone"):button("wm_all_kick", "Kick everyone"):button("wm_all_ban", "Ban everyone")
+    end
+    if #queue > 0 then
+        d:button("wm_stop", "Stop the queue")
+    end
+
+    d:spacer():small("`oLocks (pick one for access):")
+    local locks = gtproxy.world.locks()
+    for i, l in ipairs(locks) do
+        if i > 6 then
+            break
+        end
+        local item = gtproxy.items.get(l.item)
+        local chosen = lock_sel and lock_sel.x == l.x and lock_sel.y == l.y
+        d:button(string.format("wm_lock_%d_%d", l.x, l.y), string.format("%s%s at %d,%d: owner #%d, %d with access%s",
+            chosen and "`2> " or "", sanitize(item and item.name or ("item " .. l.item)), l.x, l.y, l.owner, #l.access, chosen and "``" or ""))
+    end
+    if #locks == 0 then
+        d:small("`oNo locks in this world.")
+    end
+
+    local mode = gtproxy.setting("wrench_mode")
+    d:spacer():small("`oWrench mode - the wrench on a player does at once: `w" .. mode .. "``")
+    for _, m in ipairs({ "off", "pull", "kick", "ban" }) do
+        d:button("wm_wrench_" .. m, (m == mode and "`2> " or "") .. "Wrench: " .. m .. (m == mode and "``" or ""))
+    end
+    d:button("wm_notices", "Join / leave messages: " .. (gtproxy.setting("notices") and "on" or "off"))
+    d:small(string.format("`oEntry rules: %s%s, %d rule(s) (config/modules/world_moderation.json).",
+        gtproxy.setting("rules_enabled") and "on" or "off", gtproxy.setting("dry_run") and ", dry run" or "", #active_rules))
+    if rules_problem then
+        d:small("`4" .. sanitize(latin(rules_problem)))
+    end
+    d:button("wm_rules", gtproxy.setting("rules_enabled") and "Switch the entry rules off" or "Switch the entry rules on")
+        :button("wm_dry", gtproxy.setting("dry_run") and "Act for real (no dry run)" or "Dry run only")
+
+    if #journal > 0 then
+        d:spacer():small("`oJournal (newest first):")
+        for i = #journal, math.max(1, #journal - 5), -1 do
+            local j = journal[i]
+            d:small(string.format("`o%s %s %s: %s %s", j.time, sanitize(latin(j.action)), sanitize(latin(j.target)), sanitize(latin(j.result)), sanitize(latin(j.detail))))
+        end
+    end
+    return d:spacer():button("page_moderation", "Refresh"):button("page_main", "<< Menu"):finish("gtproxy_mod")
+end
+
+local function show_mod_page()
+    gtproxy.game.dialog(mod_page())
+end
+
+local function everyone()
+    local list = {}
+    for _, p in ipairs(gtproxy.world.players()) do
+        if not p.is_local then
+            list[#list + 1] = { net_id = p.net_id, user_id = p.user_id, name = clean(p.name) }
+        end
+    end
+    return list
+end
+
+gtproxy.on("dialog", function(e)
+    if e.button == "page_moderation" then
+        show_mod_page()
+        return
+    end
+    if e.name ~= "gtproxy_mod" or e.frame then
+        return
+    end
+    local b = e.button
+    local net = tonumber(b:match("^wm_player_(%d+)$") or "")
+    local lx, ly = b:match("^wm_lock_(%-?%d+)_(%-?%d+)$")
+    local all = b:match("^wm_all_(%a+)$")
+    local one = b:match("^wm_do_(%a+)$")
+    local wrench = b:match("^wm_wrench_(%a+)$")
+    if net then
+        shown_player = net
+    elseif b == "wm_back" then
+        shown_player = nil
+    elseif lx then
+        lock_sel = { x = tonumber(lx), y = tonumber(ly) }
+        refresh()
+    elseif all then
+        if not plan then
+            say(prepare(all, everyone()))
+        end
+    elseif one then
+        local p = shown_player and player_by_net(shown_player)
+        if p and not plan then
+            local target = { { net_id = p.net_id, user_id = p.user_id, name = clean(p.name) } }
+            if one == "give" or one == "take" then
+                local lock = lock_info()
+                if lock then
+                    say(prepare(one, target, { lock = { x = lock.x, y = lock.y, item = lock.item } }))
+                end
+            else
+                say(prepare(one, target))
+            end
+        end
+    elseif b == "wm_confirm" then
+        say(act("confirm"))
+        shown_player = nil
+    elseif b == "wm_cancel" then
+        act("cancel")
+    elseif b == "wm_stop" then
+        say(act("stop"))
+    elseif b == "wm_walk" then
+        local p = shown_player and player_by_net(shown_player)
+        if p then
+            local walk = gtproxy.walk.to(p.tile_x, p.tile_y)
+            gtproxy.game.message((walk.ok and "`o" or "`4") .. "[walk] ``" .. sanitize(walk.message))
+        end
+        return
+    elseif wrench then
+        local ok, why = gtproxy.save_setting("wrench_mode", wrench)
+        gtproxy.game.message(ok and ("`oWrench mode: `w" .. wrench .. "``") or ("`4Moderation: ``" .. sanitize(why)))
+    elseif b == "wm_notices" then
+        gtproxy.save_setting("notices", not gtproxy.setting("notices"))
+    elseif b == "wm_rules" then
+        gtproxy.save_setting("rules_enabled", not gtproxy.setting("rules_enabled"))
+        load_rules()
+    elseif b == "wm_dry" then
+        gtproxy.save_setting("dry_run", not gtproxy.setting("dry_run"))
+    elseif b ~= "" then
+        return
+    end
+    show_mod_page()
+end)
+
+gtproxy.menu.add({
+    title = "World moderation",
+    icon = ICON_MOD,
+    button = "page_moderation",
+    label = "Pull / kick / ban, lock access, wrench mode, rules",
+    order = 55,
+})
+
 
 ---------------------------------------------------------------------------
 -- Leaving the world

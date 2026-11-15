@@ -1,4 +1,4 @@
--- Item finder (module API 3, see docs/modules.md).
+-- Item finder (module API 4, see docs/modules.md).
 --
 -- /pfind <name|ID|any>: of the items lying in the world (dropped objects)
 -- that match, the one you can reach by the shortest way - the way your body
@@ -338,10 +338,9 @@ gtproxy.on("pick", function(e)
     return { ok = false, message = string.format("%d, %d: пути нет — %s", e.x, e.y, way.reason) }
 end)
 
-gtproxy.on("panel", function(e)
-    if e.panel ~= PANEL then
-        return
-    end
+-- One action of the tab or the /proxy page: { ok, message }.
+local function act(action, row, value)
+    local e = { action = action, row = row, value = value }
     if e.action == "search" then
         stop_walk()
         local list, best = search(e.value)
@@ -375,7 +374,100 @@ gtproxy.on("panel", function(e)
         refresh()
         return { ok = true, message = "Цель убрана" }
     end
+end
+
+gtproxy.on("panel", function(e)
+    if e.panel ~= PANEL then
+        return
+    end
+    return act(e.action, e.row, e.value)
 end)
+
+---------------------------------------------------------------------------
+-- The Find items page of /proxy
+---------------------------------------------------------------------------
+
+local latin = gtproxy.text.latin
+local sanitize = gtproxy.text.sanitize
+local ICON_FIND = 112       -- Gems
+
+local function find_page()
+    local d = gtproxy.dialog():header("Find items", ICON_FIND)
+    if not in_world() then
+        return d:small("`oYou are not in a world."):button("page_main", "<< Menu"):finish("gtproxy_find")
+    end
+    local list = matching()
+    list_cache = list
+    d:small("`oItems lying in this world; the nearest by the way you can walk (not a straight line).")
+    d:input("if_query", "Item name, ID or any:", query.any and "any" or query.text, 30)
+        :button("if_search", "Find nearest")
+    d:spacer():small("`o" .. sanitize(latin(target_text())))
+    if status ~= "" then
+        d:small("`o" .. sanitize(latin(status)))
+    end
+    if target then
+        d:button("if_go", "Walk to the target"):button("if_stop", "Stop"):button("if_clear", "Forget the target")
+    end
+    d:spacer()
+    for i, o in ipairs(list) do
+        if i > 10 then
+            d:small(string.format("`o... %d more.", #list - 10))
+            break
+        end
+        local chosen = target and target.kind == "object" and target.object_id == o.object_id
+        d:button("if_pick_" .. o.object_id, string.format("%s%s x%d at %d,%d: %s%s", chosen and "`2> " or "",
+            sanitize(game_name(o.item)), o.amount, o.tx, o.ty, o.steps >= 0 and (o.steps .. " steps") or "no way", chosen and "``" or ""))
+    end
+    if #list == 0 then
+        d:small("`oNothing matching lies here.")
+    end
+    return d:spacer():button("if_refresh", "Refresh"):button("page_main", "<< Menu"):finish("gtproxy_find")
+end
+
+local function show_find_page()
+    gtproxy.game.dialog(find_page())
+end
+
+gtproxy.on("dialog", function(e)
+    if e.button == "page_finder" then
+        show_find_page()
+        return
+    end
+    if e.name ~= "gtproxy_find" or e.frame then
+        return
+    end
+    local b = e.button
+    local result
+    local id = b:match("^if_pick_(%d+)$")
+    if id then
+        result = act("select", id)
+    elseif b == "if_search" then
+        result = act("search", nil, e.values.if_query or "any")
+    elseif b == "if_go" then
+        result = act("go")
+    elseif b == "if_stop" then
+        result = act("stop")
+    elseif b == "if_clear" then
+        result = act("clear")
+    elseif b ~= "if_refresh" and b ~= "" then
+        return
+    end
+    if result and result.message and result.message ~= "" then
+        gtproxy.game.message((result.ok and "`o" or "`4") .. "Find: ``" .. sanitize(latin(result.message)))
+    end
+    if b ~= "if_go" then
+        show_find_page()
+    end
+end)
+
+gtproxy.menu.add({
+    title = "Find items",
+    icon = ICON_FIND,
+    button = "page_finder",
+    label = "Nearest item lying around, walk to it",
+    order = 45,
+})
+
 
 local function cmd_pfind(args, ctx)
     if not in_world() then

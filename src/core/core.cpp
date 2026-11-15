@@ -59,6 +59,7 @@ Core::Core()
         map_bridge_,
         map_server_->url()
     );
+    player_mods_ = std::make_unique<handlers::PlayerMods>(dispatcher_, *client_, *server_, *session_handler_, config_.get_server_config().address);
     command_handler_ = std::make_unique<command::CommandHandler>(
         config_,
         dispatcher_,
@@ -107,9 +108,12 @@ Core::Core()
         *session_handler_,
         *inventory_handler_,
         *map_handler_,
-        *command_handler_
+        *command_handler_,
+        *player_mods_
     );
     module_system_->set_server_name(config_.get_server_config().address);
+    module_system_->set_map_window(map_server_->url().has_value());
+    command_handler_->menu().set_map_window(map_server_->url().has_value());
 
     console_ = std::make_unique<ConsoleInput>();
     spdlog::info("Proxy console: type 'help' here for its commands (cfg list / cfg exec <profile> / cfg reload ...)");
@@ -156,6 +160,7 @@ Core::~Core()
     script_scheduler_.reset();
     command_handler_.reset();
     script_engine_.reset();
+    player_mods_.reset();
     map_handler_.reset();
     inventory_handler_.reset();
     session_handler_.reset();

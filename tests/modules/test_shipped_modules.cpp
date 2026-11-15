@@ -95,7 +95,7 @@ protected:
 TEST_F(Shipped, AllModulesLoad)
 {
     EXPECT_TRUE(problems.empty());
-    for (const auto* id : { "autohost", "camera", "drop", "info", "item_finder", "looks", "reachability", "vend_finder", "walk",
+    for (const auto* id : { "admin", "autohost", "camera", "drop", "info", "item_finder", "looks", "reachability", "vend_finder", "walk",
              "world_moderation", "world_scan", "worlds" }) {
         EXPECT_TRUE(host.loaded(id)) << id;
     }
@@ -111,6 +111,8 @@ TEST_F(Shipped, AllModulesLoad)
         // the five modules of the local test world
         "pvend", "pfind", "growscan", "track", "render", "pos1", "pos2", "pos3", "pos4", "host", "win1", "win2", "win3",
         "win4", "wm",
+        // admin mode and walking
+        "admin", "speed", "jump", "dj", "noclip", "god", "range", "spot",
     };
     EXPECT_EQ(names, expected);
 
@@ -120,7 +122,8 @@ TEST_F(Shipped, AllModulesLoad)
     for (const auto& section : sections) {
         buttons.push_back(section.button);
     }
-    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_walking", "page_items", "page_looks", "page_camera", "page_info" }));
+    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_admin", "page_walking", "page_items", "page_looks", "page_autohost",
+        "page_camera", "page_vending", "page_finder", "page_scan", "page_moderation", "page_info" }));
 }
 
 TEST_F(Shipped, DropModuleItemHelpers)
@@ -286,7 +289,7 @@ TEST_F(Shipped, WalkModuleAnswersClicks)
     EXPECT_FALSE(punch().cancelled);
     host.run_command("clickwalk", {}, Source::Game);
     EXPECT_TRUE(punch().cancelled);
-    EXPECT_TRUE(std::ranges::any_of(services.messages, [](const std::string& text) { return text == "`o[map] Walking"; }));
+    EXPECT_TRUE(std::ranges::any_of(services.messages, [](const std::string& text) { return text == "`o[walk] Walking"; }));
 
     host.emit("walk_end", [](sol::table& event) {
         event["message"] = "Arrived at 2, 2.";
@@ -379,8 +382,102 @@ TEST_F(Shipped, CameraZoomTestStepsThroughValues)
     host.run_command("zoom", { "test" }, Source::Game);
     ASSERT_EQ(services.calls.size(), 1u);
     EXPECT_FLOAT_EQ(std::get<float>(services.calls[0].args[0]), 0.5f);
-    EXPECT_NE(services.messages.back().find("Zoom test `w1/7``"), std::string::npos);
+    EXPECT_NE(services.messages.back().find("Zoom test `w1/10``"), std::string::npos);
     run_for(std::chrono::milliseconds{ 3200 });
     ASSERT_EQ(services.calls.size(), 2u);
     EXPECT_FLOAT_EQ(std::get<float>(services.calls[1].args[0]), 2.0f);
+}
+
+TEST_F(Shipped, WalkKeyAndClickWalksInsteadOfPunching)
+{
+    const auto punch = [&] {
+        return host.emit("tile_click", [](sol::table& event) {
+            event["x"] = 6;
+            event["y"] = 4;
+        });
+    };
+    EXPECT_FALSE(punch().cancelled);
+    EXPECT_FALSE(services.walking());
+    services.keys_down.insert("alt");
+    EXPECT_TRUE(punch().cancelled);
+    EXPECT_TRUE(services.walking());
+    services.keys_down.clear();
+    services.walk_stop();
+    EXPECT_FALSE(punch().cancelled);
+}
+
+TEST_F(Shipped, WalkSavesSpotsPerWorld)
+{
+    host.run_command("spot", { "save", "Shop" }, Source::Game);
+    EXPECT_TRUE(replied("spot `wshop`` = 5, 4"));
+    services.walk_stop();
+    host.run_command("spot", { "shop" }, Source::Game);
+    EXPECT_TRUE(services.walking());
+    host.run_command("spot", {}, Source::Game);
+    EXPECT_TRUE(replied("`wshop`` (5, 4)"));
+    host.run_command("spot", { "nowhere" }, Source::Game);
+    EXPECT_TRUE(replied("no spot `wnowhere`` in this world"));
+}
+
+TEST_F(Shipped, AdminModeSetsAbilitiesFromItsSettings)
+{
+    EXPECT_FLOAT_EQ(services.abilities_.speed, 1.0f);
+    host.run_command("speed", { "3" }, Source::Game);
+    EXPECT_EQ(services.saved.back(), "admin:speed=3");
+    host.run_command("dj", {}, Source::Game);
+    EXPECT_EQ(services.saved.back(), "admin:double_jump=true");
+    host.run_command("god", { "on" }, Source::Game);
+    EXPECT_EQ(services.saved.back(), "admin:god=true");
+    host.run_command("range", { "500" }, Source::Game);
+    EXPECT_EQ(services.saved.back(), "admin:range=100");
+
+    // The proxy applies the settings in force (a page, cfg reload ...).
+    auto resolved{ everything_on(host) };
+    resolved.settings["admin"]["speed"] = 3.0;
+    resolved.settings["admin"]["double_jump"] = true;
+    resolved.settings["admin"]["god"] = true;
+    host.refresh_settings(resolved);
+    host.emit("settings");
+    EXPECT_FLOAT_EQ(services.abilities_.speed, 3.0f);
+    EXPECT_TRUE(services.abilities_.double_jump);
+    EXPECT_TRUE(services.abilities_.god);
+
+    // A preset on the Admin page.
+    host.emit("dialog", [](sol::table& event) {
+        sol::state_view lua{ event.lua_state() };
+        event["name"] = "gtproxy_admin";
+        event["button"] = "admin_preset_jump";
+        event["frame"] = false;
+        event["values"] = lua.create_table();
+    });
+    EXPECT_TRUE(std::ranges::find(services.saved, "admin:gravity=0.4") != services.saved.end());
+}
+
+TEST_F(Shipped, AdminModeSaysWhyItIsOffOnGrowtopiasServers)
+{
+    services.official_ = true;
+    auto resolved{ everything_on(host) };
+    resolved.settings["admin"]["speed"] = 2.0;
+    host.refresh_settings(resolved);
+    host.emit("settings");
+    EXPECT_FLOAT_EQ(services.abilities_.speed, 1.0f);
+    EXPECT_TRUE(std::ranges::any_of(services.messages, [](const std::string& text) { return text.find("Admin mode is off here") != std::string::npos; }));
+}
+
+TEST_F(Shipped, ModulePagesOpenFromTheMenu)
+{
+    for (const auto* page : { "page_admin", "page_autohost", "page_vending", "page_finder", "page_scan", "page_moderation", "page_walking", "page_camera" }) {
+        const auto before{ services.dialogs.size() };
+        host.emit("dialog", [&](sol::table& event) {
+            sol::state_view lua{ event.lua_state() };
+            event["name"] = "gtproxy_menu";
+            event["button"] = page;
+            event["frame"] = false;
+            event["values"] = lua.create_table();
+        });
+        ASSERT_EQ(services.dialogs.size(), before + 1) << page;
+        EXPECT_NE(services.dialogs.back().find("end_dialog|gtproxy_"), std::string::npos) << page;
+        // The game's font has no Cyrillic: pages are Latin only.
+        EXPECT_TRUE(std::ranges::none_of(services.dialogs.back(), [](const char c) { return static_cast<unsigned char>(c) >= 0x80; })) << page << ": " << services.dialogs.back();
+    }
 }

@@ -1,10 +1,10 @@
 {
   "id": "world_moderation",
-  "version": "1.0.0",
-  "api_version": 3,
+  "version": "1.1.0",
+  "api_version": 4,
   "main": "main.lua",
   "name": "World moderation",
-  "description": "Players of the world in a table: pull, kick or ban one, several or everyone in a zone through the game's own player window (the server decides and confirms), lock access given or taken through the lock's window, entry rules and a blacklist (off by default, with a dry run), and a journal. Map window tab \"Модерация\"; /wm.",
+  "description": "Players of the world on the Moderation page of /proxy: pull, kick or ban one, several or everyone through the game's own player window (the server decides and confirms), wrench mode, join / leave messages, lock access through the lock's window, entry rules and a blacklist (off by default, with a dry run), and a journal; /wm.",
   "author": "GTProxy",
   "settings": {
     "rules_enabled": false,
@@ -13,6 +13,8 @@
     "exceptions": "",
     "window_timeout_ms": 3000,
     "result_timeout_ms": 4000,
-    "gap_ms": 400
+    "gap_ms": 400,
+    "wrench_mode": "off",
+    "notices": false
   }
 }

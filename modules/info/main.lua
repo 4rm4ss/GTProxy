@@ -222,7 +222,7 @@ gtproxy.menu.add({
     icon = ICON_INFO,
     button = "page_info",
     label = "Players, world, item search",
-    order = 40,
+    order = 90,
 })
 
 local function message(text)

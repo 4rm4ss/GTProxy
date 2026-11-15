@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -205,6 +206,28 @@ public:
         error.clear();
         return "data/renders/BOXTEST.png";
     }
+
+    // API 4
+    [[nodiscard]] modules::AbilitiesView abilities() const override
+    {
+        return { !official_, official_ ? "official" : "", false, false, abilities_ };
+    }
+    modules::AbilitiesView set_abilities(const modules::Abilities& abilities) override
+    {
+        if (!official_) {
+            abilities_ = abilities;
+        }
+        ++ability_sets;
+        return this->abilities();
+    }
+    [[nodiscard]] bool key_down(const std::string_view key) const override { return keys_down.contains(std::string{ key }); }
+    [[nodiscard]] bool map_window() const override { return map_window_; }
+
+    modules::Abilities abilities_{};
+    bool official_{ false };
+    int ability_sets{ 0 };
+    std::set<std::string> keys_down;
+    bool map_window_{ false };
 
     struct RouteAsk {
         map::TilePos tile;

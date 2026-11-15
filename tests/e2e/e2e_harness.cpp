@@ -814,6 +814,9 @@ void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint
 
 namespace {
 bool g_modules{ true };
+// hostname mode: config.json names www.growtopia1.com, one of Growtopia's own
+// servers - admin mode must refuse there.
+bool g_official{ false };
 
 // Without modules/ the proxy is an empty core: it forwards everything (the
 // features' commands are plain chat for the server) and only keeps track of
@@ -2549,6 +2552,242 @@ void run_autohost_flows(Endpoint& client, Endpoint& game_server, httplib::Client
     check(contains(game_reply_with(client, game_server, "/win1", "Oops"), "point 1 is not set"), "autohost: the points are gone");
 }
 
+
+// --- Admin mode, god mode and the in-game pages ------------------------------
+
+Bytes character_state(const int net_id, const float speed, const float gravity, const int flags)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_SET_CHARACTER_STATE;
+    header.net_id = static_cast<std::uint32_t>(net_id);
+    header.pad[1] = 0x80;
+    header.pad[2] = 0x80;
+    header.float_var = 125.0f;
+    header.int_data = flags;
+    header.pos_x = 1000.0f;
+    header.pos_y = 100.0f;
+    header.pos_x2 = speed;
+    header.pos_y2 = gravity;
+    return game_packet(header, {});
+}
+
+// Waits for game packets of a type and console lines at once.
+struct Seen {
+    std::vector<packet::GameUpdatePacket> packets;
+    std::vector<std::string> console;
+    std::vector<std::string> dialogs;
+    std::vector<std::pair<std::uint32_t, glm::vec2>> set_pos;
+    [[nodiscard]] bool said(const std::string_view text) const
+    {
+        return std::ranges::any_of(console, [&](const std::string& line) { return line.find(text) != std::string::npos; });
+    }
+};
+
+void take_client(Endpoint& client, Seen& seen, const packet::PacketType type)
+{
+    while (!client.inbox.empty()) {
+        Bytes data{ std::move(client.inbox.front()) };
+        client.inbox.pop_front();
+        if (const auto header{ game_header(data) }; header && header->type == type) {
+            seen.packets.push_back(*header);
+            continue;
+        }
+        if (const auto variant{ parse_variant(data) }) {
+            const auto function{ variant->get<std::string>(0) };
+            if (function == "OnConsoleMessage") {
+                seen.console.push_back(variant->get<std::string>(1));
+            } else if (function == "OnDialogRequest") {
+                seen.dialogs.push_back(variant->get<std::string>(1));
+            } else if (function == "OnSetPos") {
+                seen.set_pos.emplace_back(net_id_of(data), variant->get<glm::vec2>(1));
+            }
+        }
+    }
+}
+
+Seen command_with_state(Endpoint& client, const std::string& command, const std::string& said, const bool want_state)
+{
+    Seen seen{};
+    input(client, command);
+    pump_until([&] {
+        take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE);
+        return seen.said(said) && (!want_state || !seen.packets.empty());
+    }, 3000ms);
+    return seen;
+}
+
+Seen press(Endpoint& client, const std::string& dialog, const std::string& button, const std::string& until, const std::string& fields = {})
+{
+    Seen seen{};
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, fmt::format("action|dialog_return\ndialog_name|{}\n{}buttonClicked|{}\n", dialog, fields, button)));
+    pump_until([&] {
+        take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE);
+        return std::ranges::any_of(seen.dialogs, [&](const std::string& d) { return d.find(until) != std::string::npos; }) || seen.said(until);
+    }, 3000ms);
+    return seen;
+}
+
+bool any_has(const std::vector<std::string>& texts, const std::string_view part)
+{
+    return std::ranges::any_of(texts, [&](const std::string& t) { return t.find(part) != std::string::npos; });
+}
+
+void run_admin_flows(Endpoint& client, Endpoint& game_server)
+{
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    // The server's character state reaches the game unchanged by default.
+    send(game_server, character_state(5, 300.0f, 600.0f, 0));
+    {
+        Seen seen{};
+        pump_until([&] { take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE); return !seen.packets.empty(); }, 2000ms);
+        check(!seen.packets.empty() && seen.packets[0].pos_x2 == 300.0f && seen.packets[0].int_data == 0, "admin: the server's character state passes unchanged by default");
+    }
+
+    if (g_official) {
+        const auto seen{ command_with_state(client, "/speed 2", "Admin mode is off here", false) };
+        check(seen.said("Admin mode is off here"), "admin: refused on Growtopia's own server (www.growtopia1.com)");
+        check(seen.packets.empty(), "admin: nothing changed in the game there");
+        send(game_server, character_state(5, 300.0f, 600.0f, 0));
+        Seen again{};
+        pump_until([&] { take_client(client, again, packet::PACKET_SET_CHARACTER_STATE); return !again.packets.empty(); }, 2000ms);
+        check(!again.packets.empty() && again.packets[0].pos_x2 == 300.0f, "admin: the server's state still passes unchanged there");
+        std::ignore = command_with_state(client, "/speed 1", "Admin mode", false);
+        return;
+    }
+
+    {
+        const auto seen{ command_with_state(client, "/speed 2", "Admin mode: `wspeed x2``", true) };
+        check(seen.said("Admin mode: `wspeed x2``"), "admin: /speed 2 answered");
+        check(!seen.packets.empty() && seen.packets.back().pos_x2 == 600.0f && seen.packets.back().pos_y2 == 600.0f,
+            fmt::format("admin: the game gets its state again at once, walking speed x2 ({})", seen.packets.empty() ? 0.0f : seen.packets.back().pos_x2));
+    }
+    {
+        const auto seen{ command_with_state(client, "/dj", "double jump", true) };
+        check(!seen.packets.empty() && (seen.packets.back().int_data & 2) != 0, "admin: /dj - double jump in the state");
+        const auto jump{ command_with_state(client, "/jump 0.5", "gravity x0.5", true) };
+        check(!jump.packets.empty() && jump.packets.back().pos_y2 == 300.0f, "admin: /jump 0.5 - gravity halved (higher jumps)");
+    }
+    send(game_server, character_state(5, 310.0f, 600.0f, 0));
+    {
+        Seen seen{};
+        pump_until([&] { take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE); return !seen.packets.empty(); }, 2000ms);
+        check(!seen.packets.empty() && seen.packets[0].pos_x2 == 620.0f && (seen.packets[0].int_data & 2) != 0 && seen.packets[0].pos_y2 == 300.0f,
+            "admin: a new state from the server gets the same abilities");
+    }
+    send(game_server, character_state(20, 300.0f, 600.0f, 0));
+    {
+        Seen seen{};
+        pump_until([&] { take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE); return !seen.packets.empty(); }, 2000ms);
+        check(!seen.packets.empty() && seen.packets[0].pos_x2 == 300.0f, "admin: other players' states are left alone");
+    }
+
+    // God mode: the damage the game reports never reaches the server.
+    std::ignore = command_with_state(client, "/god on", "god mode", false);
+    game_server.inbox.clear();
+    send(client, state_packet({ 128.0f, 256.0f }, 0));
+    send(client, state_packet({ 130.0f, 256.0f }, (1u << 6) | (1u << 16)));
+    {
+        std::vector<packet::GameUpdatePacket> states;
+        pump_until([&] {
+            while (!game_server.inbox.empty()) {
+                const Bytes data{ std::move(game_server.inbox.front()) };
+                game_server.inbox.pop_front();
+                if (const auto header{ game_header(data) }; header && header->type == packet::PACKET_STATE) {
+                    states.push_back(*header);
+                }
+            }
+            return states.size() >= 2;
+        }, 2000ms);
+        check(states.size() == 2 && (static_cast<std::uint32_t>(states[1].flags.value) & ((1u << 6) | (1u << 16))) == 0 && states[1].pos_x == 130.0f,
+            "admin: god mode - lava / damage flags taken out of the state the server gets, the rest kept");
+    }
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|respawn_spike\n"));
+    {
+        Seen seen{};
+        pump_until([&] { take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE); return !seen.set_pos.empty(); }, 2000ms);
+        check(!seen.set_pos.empty() && seen.set_pos[0].first == 5 && seen.set_pos[0].second == glm::vec2{ 128.0f, 256.0f },
+            "admin: god mode - a death on spikes puts you back where you stood");
+        check(!server_text(game_server, "action|respawn_spike", 500ms).has_value(), "admin: god mode - the death is not reported to the server");
+    }
+    {
+        std::ignore = command_with_state(client, "/god off", "Admin mode", false);
+        std::ignore = command_with_state(client, "/dj off", "Admin mode", true);
+        std::ignore = command_with_state(client, "/jump 1", "Admin mode", true);
+        const auto seen{ command_with_state(client, "/speed 1", "Admin mode: `wnormal``", true) };
+        check(!seen.packets.empty() && seen.packets.back().pos_x2 == 310.0f && seen.packets.back().int_data == 0, "admin: back to normal - the server's own state again");
+    }
+    game_server.inbox.clear();
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|respawn_spike\n"));
+    check(server_text(game_server, "action|respawn_spike").has_value(), "admin: without god mode the game's respawn reaches the server");
+}
+
+void run_page_flows(Endpoint& client, Endpoint& game_server)
+{
+    client.inbox.clear();
+    game_server.inbox.clear();
+    {
+        Seen seen{};
+        input(client, "/proxy");
+        pump_until([&] { take_client(client, seen, packet::PACKET_SET_CHARACTER_STATE); return !seen.dialogs.empty(); }, 3000ms);
+        const auto menu{ seen.dialogs.empty() ? std::string{} : seen.dialogs[0] };
+        check(has(menu, "page_admin") && has(menu, "page_autohost") && has(menu, "page_moderation") && has(menu, "page_vending")
+            && has(menu, "page_finder") && has(menu, "page_scan"), "pages: /proxy offers Admin mode, Autohost, Moderation, Vending, Find items, World scan");
+    }
+    {
+        const auto page{ press(client, "gtproxy_menu", "page_moderation", "end_dialog|gtproxy_mod") };
+        check(any_has(page.dialogs, "wm_player_21") && any_has(page.dialogs, "Bob (#2021)"), "pages: Moderation lists the players");
+        const auto player{ press(client, "gtproxy_mod", "wm_player_21", "wm_do_kick") };
+        check(any_has(player.dialogs, "Bob (user ID 2021, netID 21)"), "pages: a player's page");
+        const auto confirm{ press(client, "gtproxy_mod", "wm_do_kick", "wm_confirm") };
+        check(any_has(confirm.dialogs, "Kick: Bob (#2021)?"), "pages: kick asks for confirmation first");
+        game_server.inbox.clear();
+        std::ignore = press(client, "gtproxy_mod", "wm_confirm", "end_dialog|gtproxy_mod");
+        check(wrench_player(game_server, 21).has_value(), "pages: confirmed - the player's window is asked");
+        send(game_server, dialog_packet(player_window(21, { "kick" })));
+        check(contains(server_text(game_server, "action|dialog_return"), "buttonClicked|kick"), "pages: Kick pressed in the player's window");
+        remove_player(game_server, 21, 2021);
+        Seen result{};
+        pump_until([&] { take_client(client, result, packet::PACKET_SET_CHARACTER_STATE); return result.said("Podtverzhdeno"); }, 3000ms);
+        check(result.said("Moderation: ``Kick Bob (#2021) - Podtverzhdeno (igrok pokinul mir)"), "pages: the result comes to the game's chat (Latin letters)");
+    }
+    {
+        // Wrench mode: your own wrench on a player kicks at once.
+        std::ignore = press(client, "gtproxy_mod", "wm_wrench_kick", "Wrench mode: `wkick``");
+        check(read_app_file("config/modules/world_moderation.json").find("\"wrench_mode\": \"kick\"") != std::string::npos, "pages: wrench mode saved to the config");
+        spawn(client, game_server, 26, 2026, "Zed", 6, 7);
+        client.inbox.clear();
+        game_server.inbox.clear();
+        send(game_server, dialog_packet(player_window(26, { "pull", "kick", "worldban" })));
+        check(!client_got_call(client, "OnDialogRequest"), "pages: wrench mode - the player's window does not pop up");
+        check(wrench_player(game_server, 26).has_value(), "pages: wrench mode - asked again through the checked steps");
+        send(game_server, dialog_packet(player_window(26, { "pull", "kick", "worldban" })));
+        check(contains(server_text(game_server, "action|dialog_return"), "netID|26|\nbuttonClicked|kick"), "pages: wrench mode - Kick pressed");
+        remove_player(game_server, 26, 2026);
+        Seen result{};
+        pump_until([&] { take_client(client, result, packet::PACKET_SET_CHARACTER_STATE); return result.said("Zed"); }, 3000ms);
+        check(result.said("Kick Zed (#2026) - Podtverzhdeno"), "pages: wrench mode - confirmed");
+        std::ignore = press(client, "gtproxy_mod", "wm_wrench_off", "Wrench mode: `woff``");
+    }
+    {
+        const auto page{ press(client, "gtproxy_menu", "page_autohost", "end_dialog|gtproxy_host") };
+        check(any_has(page.dialogs, "ah_set_1") && any_has(page.dialogs, "Points needed: ``1, 2"), "pages: Autohost shows the points needed");
+        const auto set{ press(client, "gtproxy_host", "ah_set_1", "point 1 = 4, 8") };
+        check(set.said("Autohost: ``point 1 = 4, 8 (zone 3,7 - 5,9)"), "pages: Set point 1 here");
+        const auto admin{ press(client, "gtproxy_menu", "page_admin", "end_dialog|gtproxy_admin") };
+        check(any_has(admin.dialogs, g_official ? "Off here" : "Your own server: `2on``"), "pages: Admin mode says whether it works on this server");
+        const auto vend{ press(client, "gtproxy_menu", "page_vending", "end_dialog|gtproxy_vend") };
+        check(any_has(vend.dialogs, "Dirt at 2,8: 3 for 1 WL (0.3333 each)"), "pages: Vending lists the machines, cheapest first");
+        const auto scan{ press(client, "gtproxy_menu", "page_scan", "end_dialog|gtproxy_scan") };
+        check(any_has(scan.dialogs, "SHOPTEST, 16x10"), "pages: World scan");
+        const auto walk{ press(client, "gtproxy_menu", "page_walking", "end_dialog|gtproxy_walking") };
+        check(any_has(walk.dialogs, "Hold `walt`` and click a tile in the game"), "pages: Walking offers Alt + click");
+    }
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
 void run_stand_flows(Endpoint& client, Endpoint& game_server)
 {
     httplib::Client http{ "127.0.0.1", MAP_PORT };
@@ -2575,6 +2814,8 @@ void run_stand_flows(Endpoint& client, Endpoint& game_server)
     spawn(client, game_server, 21, 2021, "Bob", 9, 8);
     run_moderation_flows(client, game_server, http);
     run_autohost_flows(client, game_server, http);
+    run_admin_flows(client, game_server);
+    run_page_flows(client, game_server);
 
     client.inbox.clear();
     game_server.inbox.clear();
@@ -2596,6 +2837,7 @@ int main(const int argc, char** argv)
         g_app_dir = app_dir;
     }
     const bool hash_mismatch{ argc > 2 && std::string_view{ argv[2] } == "mismatch" };
+    g_official = hash_mismatch;
 
     if (enet_initialize() != 0) {
         fmt::print("Failed to initialize ENet\n");

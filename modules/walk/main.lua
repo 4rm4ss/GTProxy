@@ -1,7 +1,10 @@
--- Walking (module API 2, see docs/modules.md).
+-- Walking (module API 4, see docs/modules.md).
 --
--- Left click in the map window, /goto <x> <y> and click-walk (a click on a
--- tile in the game walks there instead of punching or building). The
+-- Alt + click on a tile in the game (the key is "bind": alt, ctrl, shift or
+-- off) walks there instead of punching; the game only sends clicks within
+-- your punch reach (longer with Admin mode's reach). Also /goto <x> <y>,
+-- click-walk (every click walks), saved spots (/spot) and a left click in
+-- the map window when it is on. The
 -- proxy's walking engine finds the way and sends the positions; this
 -- module decides when to walk, what to tell you, and how walks are made:
 --
@@ -62,15 +65,98 @@ gtproxy.on("left_click", function(e)
     })
 end)
 
--- Click-walk: a punch / build in the game becomes a walk.
+-- Alt + click (the bind key held) or click-walk: a punch / build in the
+-- game becomes a walk.
 gtproxy.on("tile_click", function(e)
-    if not click_walk then
+    local bind = gtproxy.setting("bind")
+    local held = bind ~= "off" and gtproxy.input.key_down(bind)
+    if not click_walk and not held then
         return
     end
     local walk = gtproxy.walk.to(e.x, e.y)
-    say("`o[map] " .. walk.message)
+    say("`o[walk] " .. walk.message)
     return "cancel"
 end)
+
+---------------------------------------------------------------------------
+-- Saved spots, per server and world (data/walk.json)
+---------------------------------------------------------------------------
+
+local function world_key()
+    local info = gtproxy.world.info()
+    if not info.in_world then
+        return nil
+    end
+    return (info.server ~= "" and info.server or "server") .. "/" .. info.name
+end
+
+local function spot_names(key)
+    local list = {}
+    for name in tostring(gtproxy.store.get("spots/" .. key, "")):gmatch("[^,]+") do
+        list[#list + 1] = name
+    end
+    return list
+end
+
+local function spot(key, name)
+    local x, y = tostring(gtproxy.store.get("spot/" .. key .. "/" .. name, "")):match("^(%-?%d+),(%-?%d+)$")
+    return tonumber(x), tonumber(y)
+end
+
+local function save_spot(name)
+    local key = world_key()
+    local me = gtproxy.world.info().me
+    if not key or not me then
+        return false, "you are not in a world"
+    end
+    name = name:lower():gsub("[^%w_]", "")
+    if name == "" or #name > 16 then
+        return false, "a spot's name is 1-16 letters or digits"
+    end
+    local names = spot_names(key)
+    local known = false
+    for _, n in ipairs(names) do
+        known = known or n == name
+    end
+    if not known then
+        if #names >= 12 then
+            return false, "12 spots per world at most (spot del <name>)"
+        end
+        names[#names + 1] = name
+        gtproxy.store.set("spots/" .. key, table.concat(names, ","))
+    end
+    gtproxy.store.set("spot/" .. key .. "/" .. name, string.format("%d,%d", me.tile_x, me.tile_y))
+    return true, string.format("spot `w%s`` = %d, %d", name, me.tile_x, me.tile_y)
+end
+
+local function delete_spot(name)
+    local key = world_key()
+    if not key then
+        return false, "you are not in a world"
+    end
+    local names, left = spot_names(key), {}
+    for _, n in ipairs(names) do
+        if n ~= name then
+            left[#left + 1] = n
+        end
+    end
+    gtproxy.store.set("spots/" .. key, #left > 0 and table.concat(left, ",") or nil)
+    gtproxy.store.set("spot/" .. key .. "/" .. name, nil)
+    return #left < #names, #left < #names and ("spot `w" .. name .. "`` deleted") or "no such spot"
+end
+
+local function go_spot(name)
+    local key = world_key()
+    if not key then
+        return false, "you are not in a world"
+    end
+    local x, y = spot(key, name)
+    if not x then
+        return false, "no spot `w" .. name .. "`` in this world"
+    end
+    local walk = gtproxy.walk.to(x, y)
+    return walk.ok, walk.message
+end
 
 -- Arrived, stopped by the server or a blocked way (not when you left the
 -- world or pressed Stop in the window).
@@ -103,6 +189,33 @@ gtproxy.command("goto", "Walk to a tile: goto <x> <y>; goto stop", function(args
     ctx.reply((walk.ok and "`o" or "`4") .. "[map] " .. walk.message)
 end)
 
+gtproxy.command("spot", "Saved spots of this world: spot save <name> | spot <name> | spot del <name> | spot", function(args, ctx)
+    local word = (args[1] or ""):lower()
+    if word == "" or word == "list" then
+        local key = world_key()
+        if not key then
+            ctx.reply("`4Oops: ``you are not in a world.")
+            return
+        end
+        local parts = {}
+        for _, n in ipairs(spot_names(key)) do
+            local x, y = spot(key, n)
+            parts[#parts + 1] = string.format("`w%s`` (%d, %d)", n, x or 0, y or 0)
+        end
+        ctx.reply(#parts > 0 and ("`oSpots: " .. table.concat(parts, ", ")) or string.format("`oNo spots here: %sspot save <name>", P))
+        return
+    end
+    local ok, text
+    if word == "save" then
+        ok, text = save_spot(args[2] or "")
+    elseif word == "del" then
+        ok, text = delete_spot((args[2] or ""):lower())
+    else
+        ok, text = go_spot(word)
+    end
+    ctx.reply((ok and "`o" or "`4Oops: ``") .. text)
+end)
+
 gtproxy.command("clickwalk", "Toggle: clicking a tile in the game walks there instead of punching", function(_, ctx)
     click_walk = not click_walk
     if click_walk then
@@ -122,9 +235,28 @@ local DOORS = {
     { "none", "No doors (only walk up to them)" },
 }
 
+local BINDS = { { "alt", "Alt" }, { "ctrl", "Ctrl" }, { "shift", "Shift" }, { "off", "Off" } }
+
 local function walking_page()
     local o = gtproxy.walk.options()
     local d = gtproxy.dialog():header("Walking", ICON_WALK)
+    local bind = gtproxy.setting("bind")
+    d:small(bind == "off" and "`oKey + click: `woff``"
+        or string.format("`oHold `w%s`` and click a tile in the game: you walk there (within your punch reach).", bind))
+    for _, b in ipairs(BINDS) do
+        d:button("walk_bind_" .. b[1], (b[1] == bind and "`2> " or "") .. "Key: " .. b[2] .. (b[1] == bind and "``" or ""))
+    end
+    local key = world_key()
+    if key then
+        local names = spot_names(key)
+        d:spacer():small(#names > 0 and "`oSaved spots of this world:" or string.format("`oNo saved spots here (%sspot save <name>, or below).", P))
+        for _, n in ipairs(names) do
+            local x, y = spot(key, n)
+            d:button("walk_spot_" .. n, string.format("Go to %s (%d, %d)", n, x or 0, y or 0))
+        end
+        d:input("spot_name", "Save this tile as:", "", 16):button("walk_spot_save", "Save spot")
+    end
+    d:spacer():small("`oThe proxy's walking (key + click, /goto, spots) - not your own movement (that is Admin mode).")
     d:small("`oNow: `w" .. describe(o) .. "``")
     d:small("`oSaved to config/modules/walk.json - the same file you can edit by hand.")
     d:spacer()
@@ -187,6 +319,26 @@ gtproxy.on("dialog", function(e)
         return
     end
 
+    local bind = e.button:match("^walk_bind_(%a+)$")
+    if bind then
+        local problems = save({ bind = bind })
+        say(#problems == 0 and ("`oWalking key: `w" .. bind .. "``") or ("`4Walking: ``" .. table.concat(problems, "; ")))
+        show_page()
+        return
+    end
+    if e.button == "walk_spot_save" then
+        local ok, text = save_spot(e.values.spot_name or "")
+        say((ok and "`o" or "`4Oops: ``") .. text)
+        show_page()
+        return
+    end
+    local spot_name = e.button:match("^walk_spot_([%w_]+)$")
+    if spot_name then
+        local ok, text = go_spot(spot_name)
+        say((ok and "`o[walk] " or "`4Oops: ``") .. text)
+        return
+    end
+
     local door = e.button:match("^walk_doors_(%a+)$")
     if door then
         report(save({ doors = door }))
@@ -227,7 +379,7 @@ gtproxy.menu.add({
     title = "Walking",
     icon = ICON_WALK,
     button = "page_walking",
-    label = "Speed, jumps, doors",
+    label = "Alt + click, saved spots, speed, doors",
     order = 15,
 })
 

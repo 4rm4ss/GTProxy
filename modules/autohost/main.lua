@@ -1,4 +1,4 @@
--- Autohost (module API 3, see docs/modules.md).
+-- Autohost (module API 4, see docs/modules.md).
 --
 -- Points 1-4 of the world you host in: /pos1 ... /pos4 take the tile you
 -- stand on, or pick one on the map (tab "Автохост"); each point has a name
@@ -342,6 +342,9 @@ local function finish_pay(status, detail)
         pay.recipient and pay.recipient.name or "?", pay.calc and (pay.calc.result .. " " .. pay.unit) or "?", status) }
     gtproxy.log.info(string.format("autohost payout point %d to %s: %s %s - %s%s", pay.n, pay.recipient and pay.recipient.name or "?",
         pay.calc and pay.calc.result or "?", pay.unit, status, detail and (" (" .. detail .. ")") or ""))
+    gtproxy.game.message(string.format("%sPayout point %d: ``%s", status == "Подтверждено" and "`2" or "`4", pay.n,
+        gtproxy.text.sanitize(gtproxy.text.latin(string.format("%s %s %s -> %s%s", pay.calc and pay.calc.result or "?", pay.unit,
+            pay.recipient and pay.recipient.name or "?", status, detail and (" (" .. detail .. ")") or "")))))
     refresh()
 end
 
@@ -754,6 +757,213 @@ end)
 ---------------------------------------------------------------------------
 -- Leaving the world
 ---------------------------------------------------------------------------
+
+---------------------------------------------------------------------------
+-- The Autohost page of /proxy
+---------------------------------------------------------------------------
+
+local latin = gtproxy.text.latin
+local sanitize = gtproxy.text.sanitize
+local ICON_HOST = 242       -- World Lock
+local corner = nil          -- first zone corner from your position
+
+local function host_page()
+    local d = gtproxy.dialog():header("Autohost", ICON_HOST)
+    local key, name = world_key()
+    if not key then
+        return d:small("`oYou are not in a world."):button("page_main", "<< Menu"):finish("gtproxy_host")
+    end
+
+    if mod_plan then
+        local names = {}
+        for _, t in ipairs(mod_plan.targets) do
+            names[#names + 1] = string.format("%s (#%d)", sanitize(t.name), t.user_id)
+        end
+        d:section(string.format("%s everyone in point %d's zone: %s?", mod_plan.action, mod_plan.n, table.concat(names, ", ")), ICON_HOST)
+        d:small("`oworld_moderation checks each again (still there, still in the zone, your rights).")
+        return d:button("ah_mod_confirm", "`2Confirm``"):button("ah_mod_cancel", "Cancel"):finish("gtproxy_host")
+    end
+
+    d:small(string.format("`o%s: hosting `w%s``. Commission `w%s%%``, %s. Paid in %s.", sanitize(name), running[key] and "on" or "off",
+        payout.number(tonumber(gtproxy.setting("commission_percent")) or 0), sanitize(latin(rule_text())), sanitize(item_name(currency()))))
+    local missing = missing_required()
+    if #missing > 0 then
+        d:small("`4Points needed: ``" .. table.concat(missing, ", ") .. " - stand on the spot and press Set.")
+    end
+    for n = 1, POINTS do
+        local p = point(n)
+        local who = {}
+        if p then
+            for _, t in ipairs(players_in(p)) do
+                who[#who + 1] = sanitize(t.name)
+            end
+        end
+        d:section(p and string.format("%s%d. %s at %d,%d, zone %d,%d-%d,%d: %s", n == point_sel and "`2> " or "", n, sanitize(latin(p.name)), p.x, p.y, p.x1, p.y1, p.x2, p.y2,
+                #who > 0 and table.concat(who, ", ") or "nobody")
+            or string.format("%s%d. not set%s", n == point_sel and "`2> " or "", n, n <= 2 and " (needed)" or ""), n <= 2 and ICON_HOST or 1796)
+        d:button("ah_set_" .. n, "Set point " .. n .. " here")
+        if p then
+            d:button("ah_win_" .. n, "Payout at point " .. n):button("ah_sel_" .. n, "Choose point " .. n)
+        end
+    end
+
+    local sel = point(point_sel)
+    if sel then
+        d:spacer():small(string.format("`oPoint %d:", point_sel))
+            :input("ah_name", "Name:", latin(sel.name), 24):button("ah_rename", "Rename")
+            :button("ah_corner", corner and string.format("Zone corner 2 here (corner 1: %d, %d)", corner.x, corner.y) or "Zone corner 1 here")
+            :button("ah_mod_pull", "Pull everyone in the zone"):button("ah_mod_kick", "Kick everyone in the zone"):button("ah_mod_ban", "Ban everyone in the zone")
+    end
+
+    if pay then
+        d:spacer()
+        for _, line in ipairs(pay_lines()) do
+            d:small("`o" .. sanitize(latin(line)))
+        end
+        if pay.stage == "prepare" then
+            local inside = players_in(pay.point)
+            if #inside > 1 or not pay.recipient then
+                for _, t in ipairs(inside) do
+                    d:button("ah_recv_" .. t.net_id, "Pay " .. sanitize(t.name))
+                end
+            end
+            d:input("ah_amount", "Amount (" .. sanitize(pay.unit) .. "):", pay.calc and tostring(pay.calc.amount) or (pay.amount_text or ""), 8)
+                :button("ah_calc", "Work it out")
+                :button("ah_pay", "`2Confirm payout``")
+                :button("ah_go", "Walk to the point")
+        end
+        d:button("ah_close", pay.stage == "prepare" and "Cancel the payout" or "Close the payout")
+    end
+
+    if mod_batch then
+        local ok, b = pcall(gtproxy.call, "world_moderation", "batch", mod_batch.id)
+        if ok and b then
+            local parts = {}
+            for _, it in ipairs(b.items) do
+                parts[#parts + 1] = string.format("%s: %s", it.name, latin(it.status))
+            end
+            d:small(string.format("`o%s in point %d's zone: %s", mod_batch.action, mod_batch.n, sanitize(table.concat(parts, "; "))))
+        end
+    end
+    for i = #history, math.max(1, #history - 2), -1 do
+        d:small("`o" .. sanitize(latin(history[i].text)))
+    end
+
+    d:spacer():button(running[key] and "ah_stop" or "ah_start", running[key] and "Stop hosting" or "Start hosting")
+        :button("ah_reset", gtproxy.now() < reset_until and "`4Really clear the points?``" or "Clear the points")
+    return d:button("page_autohost", "Refresh"):button("page_main", "<< Menu"):finish("gtproxy_host")
+end
+
+local function show_host_page()
+    gtproxy.game.dialog(host_page())
+end
+
+local function tell(ok, text)
+    if text and text ~= "" then
+        gtproxy.game.message((ok and "`o" or "`4") .. "Autohost: ``" .. sanitize(latin(text)))
+    end
+end
+
+gtproxy.on("dialog", function(e)
+    if e.button == "page_autohost" then
+        show_host_page()
+        return
+    end
+    if e.name ~= "gtproxy_host" or e.frame then
+        return
+    end
+    local b = e.button
+    if pay and pay.stage == "prepare" and e.values.ah_amount then
+        recalc(e.values.ah_amount)
+    end
+    local n = tonumber(b:match("^ah_%a+_(%d)$") or "")
+    if b:match("^ah_set_%d$") then
+        local here = me()
+        if here then
+            local p = set_point_at(n, here.tile_x, here.tile_y)
+            point_sel = n
+            tell(true, string.format("point %d = %d, %d (zone %d,%d - %d,%d)", n, p.x, p.y, p.x1, p.y1, p.x2, p.y2))
+        else
+            tell(false, "your position is not known yet")
+        end
+    elseif b:match("^ah_win_%d$") then
+        local ok, _, why = open_pay(n)
+        if not ok then
+            tell(false, why)
+        end
+    elseif b:match("^ah_sel_%d$") then
+        point_sel = n
+        corner = nil
+    elseif b == "ah_rename" then
+        local p = point(point_sel)
+        local text = (e.values.ah_name or ""):match("^%s*(.-)%s*$")
+        if p and text ~= "" and #text <= 24 then
+            p.name = text
+            save_point(point_sel, p)
+        else
+            tell(false, "a name is 1-24 letters")
+        end
+    elseif b == "ah_corner" then
+        local here, p = me(), point(point_sel)
+        if here and p then
+            if not corner then
+                corner = { x = here.tile_x, y = here.tile_y }
+            else
+                p.x1, p.y1 = math.min(corner.x, here.tile_x), math.min(corner.y, here.tile_y)
+                p.x2, p.y2 = math.max(corner.x, here.tile_x), math.max(corner.y, here.tile_y)
+                save_point(point_sel, p)
+                tell(true, string.format("zone of point %d: %d,%d - %d,%d", point_sel, p.x1, p.y1, p.x2, p.y2))
+                corner = nil
+            end
+        end
+    elseif b:match("^ah_mod_%a+$") and b ~= "ah_mod_confirm" and b ~= "ah_mod_cancel" then
+        local ok, text = prepare_mod(b:sub(8), point_sel)
+        if not ok then
+            tell(false, text)
+        end
+    elseif b == "ah_mod_confirm" then
+        tell(confirm_mod())
+    elseif b == "ah_mod_cancel" then
+        mod_plan = nil
+    elseif b:match("^ah_recv_%d+$") and pay and pay.stage == "prepare" then
+        for _, t in ipairs(players_in(pay.point)) do
+            if tostring(t.net_id) == b:match("%d+$") then
+                pay.recipient = t
+            end
+        end
+    elseif b == "ah_calc" then
+        -- recalculated above
+    elseif b == "ah_pay" then
+        local ok, why = confirm_pay()
+        if not ok then
+            tell(false, "not paid: " .. why)
+        end
+    elseif b == "ah_go" and pay then
+        local walk = gtproxy.walk.to(pay.point.x, pay.point.y)
+        tell(walk.ok, walk.message)
+        return
+    elseif b == "ah_close" and pay then
+        if pay.stage == "dialog" or pay.stage == "sent" then
+            tell(false, "waiting for the server - it cannot be closed now")
+        else
+            pay = nil
+        end
+    elseif b == "ah_start" or b == "ah_stop" or b == "ah_reset" then
+        tell(host(b:sub(4)))
+    elseif b ~= "" then
+        return
+    end
+    refresh()
+    show_host_page()
+end)
+
+gtproxy.menu.add({
+    title = "Autohost",
+    icon = ICON_HOST,
+    button = "page_autohost",
+    label = "Points, payouts with commission, zone pull / kick / ban",
+    order = 35,
+})
 
 local function reset_session(why)
     if pay and (pay.stage == "dialog" or pay.stage == "sent") then

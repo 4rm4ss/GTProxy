@@ -17,6 +17,13 @@
 #include <magic_enum/magic_enum.hpp>
 #include <spdlog/spdlog.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include "features.hpp"
 #include "../modules/json.hpp"
 #include "../item/item_database.hpp"
@@ -65,7 +72,8 @@ ModuleSystem::ModuleSystem(
     handlers::SessionHandler& session,
     handlers::InventoryHandler& inventory,
     handlers::MapHandler& map,
-    command::CommandHandler& commands
+    command::CommandHandler& commands,
+    handlers::PlayerMods& mods
 )
     : modules_dir_{ app_dir / "modules" }
     , data_dir_{ app_dir / "data" }
@@ -76,6 +84,7 @@ ModuleSystem::ModuleSystem(
     , map_{ map }
     , commands_{ commands }
     , registry_{ commands.registry() }
+    , mods_{ mods }
     , host_{ *this }
 {
     // Modules cannot take the proxy's own commands.
@@ -894,6 +903,7 @@ modules::WorldView ModuleSystem::world() const
     view.net_id = session_.local_net_id();
     view.real_name = session_.real_name();
     view.server = server_name_;
+    view.official = mods_.official();
     if (const auto player{ world::World::instance().get_local_player().lock() }) {
         view.user_id = static_cast<std::uint32_t>(player->user_id());
     }
@@ -1392,5 +1402,44 @@ std::string ModuleSystem::render_png(std::string& error)
     }
     spdlog::info("Map exported to {}", file.string());
     return file.string();
+}
+
+modules::AbilitiesView ModuleSystem::abilities() const
+{
+    const auto status{ mods_.status() };
+    const auto& s{ status.settings };
+    return { status.allowed, status.why, status.state_known, status.state_made,
+        { s.speed, s.gravity, s.acceleration, s.water_speed, s.double_jump, s.noclip, s.range, s.god } };
+}
+
+modules::AbilitiesView ModuleSystem::set_abilities(const modules::Abilities& a)
+{
+    std::ignore = mods_.set({ a.speed, a.gravity, a.acceleration, a.water_speed, a.double_jump, a.noclip, a.range, a.god });
+    return abilities();
+}
+
+bool ModuleSystem::key_down(const std::string_view key) const
+{
+#ifdef _WIN32
+    int code{ 0 };
+    if (key == "alt") {
+        code = VK_MENU;
+    }
+    else if (key == "ctrl") {
+        code = VK_CONTROL;
+    }
+    else if (key == "shift") {
+        code = VK_SHIFT;
+    }
+    return code != 0 && (GetAsyncKeyState(code) & 0x8000) != 0;
+#else
+    std::ignore = key;
+    return false;
+#endif
+}
+
+bool ModuleSystem::map_window() const
+{
+    return map_window_;
 }
 }

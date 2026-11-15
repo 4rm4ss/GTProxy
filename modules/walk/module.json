@@ -1,10 +1,10 @@
 {
   "id": "walk",
-  "version": "1.1.0",
-  "api_version": 2,
+  "version": "1.2.0",
+  "api_version": 4,
   "main": "main.lua",
   "name": "Walking",
-  "description": "Left click in the map window, /goto <x> <y> and /clickwalk: walk to a tile. Speed, jumps and doors on the Walking page of /proxy.",
+  "description": "Alt + click (punch) on a tile in the game walks there; /goto <x> <y>, /clickwalk, saved spots (/spot). Speed, jumps, doors and the key on the Walking page of /proxy.",
   "author": "GTProxy",
   "settings": {
     "tell_game": true,
@@ -13,6 +13,7 @@
     "gravity": false,
     "jump_height": 3,
     "air_jumps": 1,
-    "doors": "access"
+    "doors": "access",
+    "bind": "alt"
   }
 }

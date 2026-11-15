@@ -9,6 +9,7 @@
 
 #include "handlers/inventory_handler.hpp"
 #include "handlers/map_handler.hpp"
+#include "handlers/player_mods.hpp"
 #include "handlers/session_handler.hpp"
 #include "wheel_hook.hpp"
 #include "../command/command_handler.hpp"
@@ -34,7 +35,8 @@ public:
         handlers::SessionHandler& session,
         handlers::InventoryHandler& inventory,
         handlers::MapHandler& map,
-        command::CommandHandler& commands
+        command::CommandHandler& commands,
+        handlers::PlayerMods& mods
     );
     ~ModuleSystem() override;
 
@@ -91,6 +93,11 @@ public:
     void set_panel(const std::string& module_id, const std::string& id, const std::optional<std::string>& json) override;
     void request_pick(const std::string& module_id, const std::string& label) override;
     std::string render_png(std::string& error) override;
+    [[nodiscard]] modules::AbilitiesView abilities() const override;
+    modules::AbilitiesView set_abilities(const modules::Abilities& abilities) override;
+    [[nodiscard]] bool key_down(std::string_view key) const override;
+    [[nodiscard]] bool map_window() const override;
+    void set_map_window(const bool on) { map_window_ = on; }
 
     // The game server of config.json: modules keep data per server and world.
     void set_server_name(std::string name) { server_name_ = std::move(name); }
@@ -131,6 +138,8 @@ private:
     handlers::MapHandler& map_;
     command::CommandHandler& commands_;
     command::CommandRegistry& registry_;
+    handlers::PlayerMods& mods_;
+    bool map_window_{ false };
     modules::ModuleHost host_;
     std::vector<event::ScopedHandle> handles_;
 

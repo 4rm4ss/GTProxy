@@ -31,6 +31,8 @@ public:
 
     // Where the module sections and status lines come from.
     void set_sources(Sections sections, StatusLines status);
+    // The map window is on (config.json map.enabled): the menu offers it.
+    void set_map_window(const bool on) { map_window_ = on; }
 
     void show_main() const;
     void show_commands() const;
@@ -52,5 +54,6 @@ private:
     Runner run_;
     Sections sections_;
     StatusLines status_;
+    bool map_window_{ false };
 };
 }

@@ -29,7 +29,9 @@ public:
     // The map window (http://127.0.0.1:<port>/ in a browser) and walking
     // to a clicked tile.
     struct MapConfig {
-        bool enabled{ true };
+        // The browser window is off unless switched on: everything the
+        // modules offer is in the game's /proxy menu.
+        bool enabled{ false };
         int port{ 17171 };
         // Open the window by itself when the proxy starts.
         bool open_on_start{ false };

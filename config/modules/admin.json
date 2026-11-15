@@ -1,0 +1,10 @@
+{
+  "speed": 1,
+  "gravity": 1,
+  "acceleration": 1,
+  "water_speed": 1,
+  "double_jump": false,
+  "noclip": false,
+  "range": 0,
+  "god": false
+}

@@ -21,7 +21,7 @@ namespace modules {
 // only adds to version 1, so modules written for 1 run unchanged. A module
 // that asks for a version outside this range is not loaded.
 inline constexpr int MIN_API_VERSION{ 1 };
-inline constexpr int API_VERSION{ 3 };
+inline constexpr int API_VERSION{ 4 };
 
 struct Manifest {
     std::string id;

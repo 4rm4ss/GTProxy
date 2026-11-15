@@ -280,7 +280,7 @@ def check_module_log(log):
     check("Module 'whereami' 1.0.0 loaded from modules/whereami" in log, "copied example module whereami loaded")
     for module in ("camera", "drop", "info", "looks", "walk", "worlds"):
         check(re.search(rf"Module '{module}' [0-9.]+ loaded from modules/{module}", log) is not None, f"shipped module {module} loaded")
-    check("Module skipped: modules/badapi: needs module API version 99, this proxy has versions 1 to 3: not loaded" in log,
+    check("Module skipped: modules/badapi: needs module API version 99, this proxy has versions 1 to 4: not loaded" in log,
           "module asking for another API version: logged, not loaded")
     check("Module skipped: modules/zz_reach_copy: id 'reachability' is already used by modules/reachability: not loaded" in log,
           "duplicate module id: logged, not loaded")
@@ -354,7 +354,8 @@ def main():
         address = UPSTREAM_IP
 
     with open(os.path.join(workdir, "config.json"), "w") as f:
-        json.dump({"server": {"port": 16999, "address": address}}, f)
+        # The map window is off by default; the e2e drives it.
+        json.dump({"server": {"port": 16999, "address": address}, "map": {"enabled": True}}, f)
 
     original_hosts = patch_hosts() if mode == "hostname" else None
     if UPSTREAM_PORT != 443:

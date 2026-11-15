@@ -138,9 +138,30 @@ pause of 200 ms by default). Your item choices (fast drop, fast trash, the
 pause, the keep list) are saved in `data/drop.json` next to `Proxy.exe`; an
 old `gtproxy-settings.txt` is moved there on the first start.
 
+### In the game: /proxy
+
+Everything is in the game's own `/proxy` menu: Admin mode, Walking,
+Autohost, Vending, Find items, World scan, World moderation, Camera and the
+rest. Pages and messages in the game use Latin letters (the game's font has
+no Cyrillic).
+
+- **Admin mode** (only on your own server): your own movement as the server
+  gives it with items - walking speed (`/speed 2`), gravity (`/jump 0.4`:
+  higher, longer jumps), double jump (`/dj`), walking through blocks
+  (`/noclip`), punch / build reach (`/range 10`), god mode (`/god`: the damage
+  your game reports - lava, acid, hits - never reaches the server, a death on
+  spikes puts you back where you stood). Refused on Growtopia's own servers.
+- **Alt + click** a tile in the game: walk there instead of punching (the key
+  is on the Walking page; clicks reach the proxy within your punch reach).
+  Saved spots: `/spot save home`, `/spot home`.
+- **Camera -> Zoom test**: the game's zoom limit is inside the game; the
+  proxy can only ask the game to zoom the way a server does, and the test
+  shows whether your game obeys.
+
 ### Map window
 
-`/map` (or *Map window* in `/proxy`) opens the world you are in as a map in its
+Off unless `"map": { "enabled": true }` is in config.json. Then `/map` (or
+*Map window* in `/proxy`) opens the world you are in as a map in its
 own window: on Windows a Microsoft Edge app window, elsewhere the default
 browser. It is served by the proxy itself at `http://127.0.0.1:17171/`, only
 reachable from your computer, and shows blocks (in the colours of their seeds),
@@ -238,7 +259,8 @@ is a small module to start from.
 
 #### Modules for a local test world
 
-Five modules work in the map window's tabs (the **Modules** button) and only
+Five modules work on their pages of `/proxy` (and in the map window's tabs
+when it is on) and only
 do what you could do by hand: open a machine's, a player's or a lock's
 window with the wrench, press its own button, answer the drop window. The
 server checks your rights and confirms; every action ends as confirmed,

@@ -14,7 +14,7 @@ profiles switch groups of settings at once. All of it sits **next to
 Proxy.exe
 modules/              the features, one folder each
   camera/  drop/  info/  looks/  reachability/  walk/  worlds/
-  vend_finder/  item_finder/  world_scan/  world_moderation/  autohost/
+  admin/  vend_finder/  item_finder/  world_scan/  world_moderation/  autohost/
 config/               settings you edit
   modules.json
   modules/<id>.json
@@ -106,13 +106,13 @@ drop on/off, the keep list ...) it keeps in `data/<id>.json` itself
 Everything a module can use is in the global table `gtproxy`. Modules have the
 Lua standard libraries `string`, `table`, `math`, `utf8`, `coroutine` and the
 base functions (without `dofile`/`loadfile`); `print` writes to the proxy log.
-`gtproxy.api_version` is the proxy's API version (3); `gtproxy.module` holds
+`gtproxy.api_version` is the proxy's API version (4); `gtproxy.module` holds
 `id`, `version` and `name` of the module itself; `gtproxy.prefix` is the chat
 command prefix (`"/"`).
 
-Version 1 is marked **(1)** below, version 3 **(3)**; everything else is
-version 2. A module needing version 3 says `"api_version": 3` in its
-module.json.
+Version 1 is marked **(1)** below, version 3 **(3)**, version 4 **(4)**;
+everything else is version 2. A module needing version 4 says
+`"api_version": 4` in its module.json.
 
 ### Events
 
@@ -212,6 +212,7 @@ local w = gtproxy.world.info()
 -- w.net_id (yours, -1 outside a world), w.real_name
 
 -- (3) w.server (the game server of config.json), w.user_id (your account ID)
+-- (4) w.official: true on Growtopia's own servers
 
 gtproxy.world.players()   -- { { net_id, user_id, name, country, invisible, is_local, x, y, tile_x, tile_y } ... }
 gtproxy.world.objects()   -- dropped items: { { object_id, item, amount, x, y } ... } (x, y in pixels; tile = floor((x + 8) / 32))
@@ -324,6 +325,40 @@ it and why it counts as closed. Out of range values are clamped. `config.json`
 A Growtopia server decides what it accepts: an official one may stop or
 reject fast walks. The `walk_end` event tells how a walk ended.
 
+### Your character on your own server **(4)**
+
+```lua
+local a = gtproxy.player.abilities()          -- { allowed, why, state_known, state_made,
+                                              --   speed, gravity, acceleration, water_speed,
+                                              --   double_jump, noclip, range, god }
+gtproxy.player.abilities({ speed = 2, double_jump = true })   -- changes those given, returns all
+```
+
+The game moves your character itself, with the values the server sends
+for items (PACKET_SET_CHARACTER_STATE). The proxy applies these to that
+state as it reaches your game, and sends it again when they change:
+`speed`, `gravity` (lower: higher, longer jumps), `acceleration`,
+`water_speed` are factors of the server's own values (0.05-20); `double_jump`
+(the game knows one jump in the air); `noclip` walks through blocks; `range`
+adds to the punch and build reach (0-100). If the server never sent a state,
+the usual values are used (`state_made`). `god`: the damage your game
+reports to the server (lava, acid, hits) is taken out of its state reports,
+and a death on spikes is not reported - the proxy puts you back where you
+stood.
+
+`allowed` is false (and nothing changes) on Growtopia's own servers
+(config.json's server or the game server is `growtopia1.com`,
+`growtopia2.com` or 213.179.208-209.x): there these would be cheats against
+other players.
+
+### Keys **(4)**
+
+```lua
+gtproxy.input.key_down("alt")    -- or "ctrl", "shift": held right now (Windows; false elsewhere)
+```
+
+E.g. in a `tile_click` handler: Alt + click walks instead of punching.
+
 ### Mouse wheel
 
 ```lua
@@ -389,6 +424,7 @@ local foot = gtproxy.map.route(x, y, { walk = true, gravity = true })   -- the w
 local steps = gtproxy.map.distances({ { x = 1, y = 2 }, ... })          -- steps to each (-1: no way), one search for all
 gtproxy.map.pick("label")                        -- the next left click in the map window is this module's (event pick)
 local path, why = gtproxy.map.render()           -- PNG of the world with all marks: data/renders/<WORLD>_<date>.png
+gtproxy.map.window()                             -- (4) the map window is on (config.json map.enabled; off by default)
 
 gtproxy.panel.set("vend", {                      -- the module's tab in the map window ("Modules" button)
     title = "Вендинги", note = "text\nlines",
@@ -435,6 +471,7 @@ gtproxy.store.set("fast_drop", true)    -- true/false, a number, text; nil remov
 local items = gtproxy.load("items.lua") -- another Lua file of the module's folder, run once
 gtproxy.text.strip_colors("`2Hi``")     -- "Hi"
 gtproxy.text.sanitize(text)             -- without '|' and line breaks (safe in dialogs)
+gtproxy.text.latin("Подтверждено")      -- (4) "Podtverzhdeno": the game's font has no Cyrillic
 ```
 
 Timers run on the proxy's main loop (at least 10 ms apart). A repeating timer
@@ -464,13 +501,14 @@ gtproxy.log.info("text")    -- also .debug (session log only), .warn and .error;
 | `looks` | `/nick [name]`, `/netid`, `/skin [hex] <code>`, `/rainbow [ms]` | Looks | `rainbow_ms` |
 | `camera` | the mouse wheel over the game; `/zoom <value> [ms]`, `/zoom reset` | Camera (wheel mode, step, range, zoom to a value) | `wheel` (`always`/`ctrl`/`shift`/`alt`/`off`), `wheel_step`, `invert`, `min_zoom`, `max_zoom`, `zoom`, `normal`, `time_ms`, `keep`, `keep_delay_ms`; your last zoom in `data/camera.json` |
 | `info` | `/pos`, `/players`, `/world`, `/find <name>`, `/item <id>`, `/debug ...` | Info | |
-| `walk` | `/goto <x> <y>`, `/goto stop`, `/clickwalk`, `/walking`; left click in the map window | Walking (speed, step, gravity, jump height, jumps in the air, doors) | `speed`, `step_ms`, `gravity`, `jump_height`, `air_jumps`, `doors`, `tell_game` |
+| `walk` | Alt + click on a tile in the game (`bind`), `/goto <x> <y>`, `/goto stop`, `/clickwalk`, `/spot save\|del <name>`, `/spot <name>`, `/walking`; left click in the map window | Walking (key, saved spots, speed, step, gravity, jump height, jumps in the air, doors) | `bind` (`alt`/`ctrl`/`shift`/`off`), `speed`, `step_ms`, `gravity`, `jump_height`, `air_jumps`, `doors`, `tell_game`; spots in `data/walk.json` |
+| `admin` | `/admin`, `/speed <x>`, `/jump <x>`, `/dj`, `/noclip`, `/range <tiles>`, `/god` | Admin mode (your own movement: speed, gravity, double jump, through blocks, reach, god mode; presets) | `speed`, `gravity`, `acceleration`, `water_speed`, `double_jump`, `noclip`, `range`, `god` |
 | `reachability` | `/reach <x> <y>` (and `reach x y` in the console); right click in the map window | | `show_marker`, `show_steps`, `log_result` |
-| `vend_finder` | `/pvend <name\|ID>` | map window tab Вендинги | `presets`, `check_timeout_ms`, `buy_timeout_ms`, `buycount` (`items`/`packs`) |
-| `item_finder` | `/pfind <name\|ID\|any>`, `/pfind go`, `/pfind stop` | map window tab Предметы | `walk_gravity`, `list_limit` |
-| `world_scan` | `/growscan [name\|ID]`, `/track [on\|off\|clear]`, `/render` | map window tabs Скан мира, Журнал | `journal_size`, `marks_limit`, `track_on_start` |
-| `world_moderation` | `/wm [list]`, `/wm pull\|kick\|ban <exact name>`, `/wm stop` | map window tabs Модерация, Журнал модерации | `rules_enabled`, `dry_run`, `rules`, `exceptions`, `window_timeout_ms`, `result_timeout_ms`, `gap_ms` |
-| `autohost` | `/pos1`-`/pos4`, `/host start\|stop\|reset`, `/win1`-`/win4 [amount]` | map window tabs Автохост, Выплата | `commission_percent`, `rounding` (`down`/`up`/`nearest`), `currency`, `zone_radius`, `near_tiles`, `max_drop`, `dialog_timeout_ms`, `result_timeout_ms`; points in `data/autohost.json` per server and world |
+| `vend_finder` | `/pvend <name\|ID>` | Vending (and the map window tab Вендинги) | `presets`, `check_timeout_ms`, `buy_timeout_ms`, `buycount` (`items`/`packs`) |
+| `item_finder` | `/pfind <name\|ID\|any>`, `/pfind go`, `/pfind stop` | Find items (and the tab Предметы) | `walk_gravity`, `list_limit` |
+| `world_scan` | `/growscan [name\|ID]`, `/track [on\|off\|clear]`, `/render` | World scan (and the tabs Скан мира, Журнал) | `journal_size`, `marks_limit`, `track_on_start` |
+| `world_moderation` | `/wm [list]`, `/wm pull\|kick\|ban <exact name>`, `/wm stop`; wrench on a player (wrench mode) | World moderation (players, everyone, locks, wrench mode, join / leave messages, rules, journal; and the tabs Модерация, Журнал модерации) | `rules_enabled`, `dry_run`, `rules`, `exceptions`, `wrench_mode` (`off`/`pull`/`kick`/`ban`), `notices`, `window_timeout_ms`, `result_timeout_ms`, `gap_ms` |
+| `autohost` | `/pos1`-`/pos4`, `/host start\|stop\|reset`, `/win1`-`/win4 [amount]` | Autohost (points, zones from your position, payout, zone actions; and the tabs Автохост, Выплата) | `commission_percent`, `rounding` (`down`/`up`/`nearest`), `currency`, `zone_radius`, `near_tiles`, `max_drop`, `dialog_timeout_ms`, `result_timeout_ms`; points in `data/autohost.json` per server and world |
 
 If a module's command is already taken (by the proxy, a script or another
 module), the module takes its name with a prefix instead (`/vend_pvend`,
@@ -485,12 +523,15 @@ hand in the game: open a machine's, a player's or a lock's window with the
 wrench, press its own button, answer the drop window. The server checks your
 rights and confirms; each action ends as «Подтверждено», «Отклонено», «Нет
 прав», «Недоступно» or «Результат неизвестен», and nothing is sent twice by
-itself. Their tabs are in Russian; what they write in the game is in English
-(the game's font has no Cyrillic). Leaving the world, another world or a
+itself. Everything is on their pages of the /proxy menu; results also come
+to the game's chat. The game's font has no Cyrillic, so in the game the
+states read in Latin letters («Подтверждено» = "Podtverzhdeno",
+«Результат неизвестен» = "Rezultat neizvesten" ...). The map window (off by
+default) has the same in Russian. Leaving the world, another world or a
 lost connection drops every target, way and unconfirmed action.
 
 The core keeps `/proxy` (the menu frame), `/proxyhelp` (all commands) and
-`/map` (open the map window).
+`/map` (the map window in a browser; off unless config.json has `"map": { "enabled": true }`).
 
 Settings changed on a module's page (Walking, Camera) are written to its
 `config/modules/<id>.json`: the page and the file are the same settings.

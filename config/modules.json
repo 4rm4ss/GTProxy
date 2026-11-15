@@ -1,6 +1,7 @@
 {
   "profile": "default",
   "modules": {
+    "admin": { "enabled": true },
     "autohost": { "enabled": true },
     "camera": { "enabled": true },
     "drop": { "enabled": true },
