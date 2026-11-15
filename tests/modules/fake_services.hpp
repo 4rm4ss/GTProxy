@@ -210,7 +210,7 @@ public:
     // API 4
     [[nodiscard]] modules::AbilitiesView abilities() const override
     {
-        return { !official_, official_ ? "official" : "", false, false, abilities_ };
+        return { !official_, official_ ? "official" : "your own server", official_ ? "213.179.209.168:17198" : "127.0.0.1:17091", false, false, abilities_ };
     }
     modules::AbilitiesView set_abilities(const modules::Abilities& abilities) override
     {

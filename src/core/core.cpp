@@ -59,7 +59,7 @@ Core::Core()
         map_bridge_,
         map_server_->url()
     );
-    player_mods_ = std::make_unique<handlers::PlayerMods>(dispatcher_, *client_, *server_, *session_handler_, config_.get_server_config().address);
+    player_mods_ = std::make_unique<handlers::PlayerMods>(dispatcher_, *client_, *server_, *session_handler_);
     command_handler_ = std::make_unique<command::CommandHandler>(
         config_,
         dispatcher_,

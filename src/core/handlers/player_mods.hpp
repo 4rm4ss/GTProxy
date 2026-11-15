@@ -23,8 +23,8 @@ namespace core::handlers {
 // reported: the proxy puts you back where you stood instead.
 //
 // Never on Growtopia's own servers: there these are cheats against other
-// players. The proxy refuses them when config.json's server or the game
-// server it connected to is one of Growtopia's.
+// players. Decided by the game server the proxy is connected to (see
+// player_state::judge), not by the name in config.json.
 class PlayerMods {
 public:
     using Settings = player_state::Abilities;
@@ -32,12 +32,13 @@ public:
     struct Status {
         bool allowed{ false };          // false on Growtopia's own servers
         std::string why;
+        std::string game_server;        // "host:port" the proxy plays on
         bool state_known{ false };      // the server's character state was seen
         bool state_made{ false };       // none came: the proxy made one from the usual values
         Settings settings;
     };
 
-    PlayerMods(event::Dispatcher& dispatcher, network::Client& client, network::Server& server, SessionHandler& session, std::string server_address);
+    PlayerMods(event::Dispatcher& dispatcher, network::Client& client, network::Server& server, SessionHandler& session);
 
     PlayerMods(const PlayerMods&) = delete;
     PlayerMods& operator=(const PlayerMods&) = delete;
@@ -57,7 +58,6 @@ private:
     network::Client& client_;
     network::Server& server_;
     SessionHandler& session_;
-    std::string server_address_;
     std::vector<event::ScopedHandle> handles_;
 
     Settings settings_{};

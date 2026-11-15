@@ -8,12 +8,11 @@
 namespace core::handlers {
 using namespace player_state;
 
-PlayerMods::PlayerMods(event::Dispatcher& dispatcher, network::Client& client, network::Server& server, SessionHandler& session, std::string server_address)
+PlayerMods::PlayerMods(event::Dispatcher& dispatcher, network::Client& client, network::Server& server, SessionHandler& session)
     : dispatcher_{ dispatcher }
     , client_{ client }
     , server_{ server }
     , session_{ session }
-    , server_address_{ std::move(server_address) }
 {
     // Before the packets are passed on (forwarding listens at Normal).
     handles_.emplace_back(dispatcher_, event::Type::ClientBoundPacket, dispatcher_.append_listener(
@@ -33,20 +32,16 @@ PlayerMods::PlayerMods(event::Dispatcher& dispatcher, network::Client& client, n
 
 bool PlayerMods::official() const
 {
-    if (official_address(server_address_)) {
-        return true;
-    }
-    const auto& target{ client_.last_target() };
-    return target.has_value() && official_address(target->first);
+    return judge(client_.last_target()).official;
 }
 
 PlayerMods::Status PlayerMods::status() const
 {
     Status status{};
-    status.allowed = !official();
-    if (!status.allowed) {
-        status.why = "this is one of Growtopia's own servers: there these would be cheats against other players";
-    }
+    const auto verdict{ judge(client_.last_target()) };
+    status.allowed = !verdict.official;
+    status.why = verdict.why;
+    status.game_server = verdict.game_server;
     status.state_known = !last_state_.empty() && !made_;
     status.state_made = made_;
     status.settings = settings_;

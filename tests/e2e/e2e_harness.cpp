@@ -814,8 +814,8 @@ void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint
 
 namespace {
 bool g_modules{ true };
-// hostname mode: config.json names www.growtopia1.com, one of Growtopia's own
-// servers - admin mode must refuse there.
+// hostname mode: config.json names www.growtopia1.com while the game server
+// is the fake one here - admin mode must still work (the connected server decides).
 bool g_official{ false };
 
 // Without modules/ the proxy is an empty core: it forwards everything (the
@@ -2645,21 +2645,12 @@ void run_admin_flows(Endpoint& client, Endpoint& game_server)
         check(!seen.packets.empty() && seen.packets[0].pos_x2 == 300.0f && seen.packets[0].int_data == 0, "admin: the server's character state passes unchanged by default");
     }
 
-    if (g_official) {
-        const auto seen{ command_with_state(client, "/speed 2", "Admin mode is off here", false) };
-        check(seen.said("Admin mode is off here"), "admin: refused on Growtopia's own server (www.growtopia1.com)");
-        check(seen.packets.empty(), "admin: nothing changed in the game there");
-        send(game_server, character_state(5, 300.0f, 600.0f, 0));
-        Seen again{};
-        pump_until([&] { take_client(client, again, packet::PACKET_SET_CHARACTER_STATE); return !again.packets.empty(); }, 2000ms);
-        check(!again.packets.empty() && again.packets[0].pos_x2 == 300.0f, "admin: the server's state still passes unchanged there");
-        std::ignore = command_with_state(client, "/speed 1", "Admin mode", false);
-        return;
-    }
 
     {
         const auto seen{ command_with_state(client, "/speed 2", "Admin mode: `wspeed x2``", true) };
-        check(seen.said("Admin mode: `wspeed x2``"), "admin: /speed 2 answered");
+        check(seen.said("Admin mode: `wspeed x2``"), g_official
+            ? "admin: config.json says www.growtopia1.com, but the game server is not Growtopia's - /speed 2 works"
+            : "admin: /speed 2 answered");
         check(!seen.packets.empty() && seen.packets.back().pos_x2 == 600.0f && seen.packets.back().pos_y2 == 600.0f,
             fmt::format("admin: the game gets its state again at once, walking speed x2 ({})", seen.packets.empty() ? 0.0f : seen.packets.back().pos_x2));
     }
@@ -2776,7 +2767,7 @@ void run_page_flows(Endpoint& client, Endpoint& game_server)
         const auto set{ press(client, "gtproxy_host", "ah_set_1", "point 1 = 4, 8") };
         check(set.said("Autohost: ``point 1 = 4, 8 (zone 3,7 - 5,9)"), "pages: Set point 1 here");
         const auto admin{ press(client, "gtproxy_menu", "page_admin", "end_dialog|gtproxy_admin") };
-        check(any_has(admin.dialogs, g_official ? "Off here" : "Your own server: `2on``"), "pages: Admin mode says whether it works on this server");
+        check(any_has(admin.dialogs, "Your own server: `2on``") && any_has(admin.dialogs, "Game server: `w"), "pages: Admin mode says it works and on which game server");
         const auto vend{ press(client, "gtproxy_menu", "page_vending", "end_dialog|gtproxy_vend") };
         check(any_has(vend.dialogs, "Dirt at 2,8: 3 for 1 WL (0.3333 each)"), "pages: Vending lists the machines, cheapest first");
         const auto scan{ press(client, "gtproxy_menu", "page_scan", "end_dialog|gtproxy_scan") };

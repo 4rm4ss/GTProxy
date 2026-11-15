@@ -114,3 +114,24 @@ TEST(PlayerStateTest, GrowtopiasOwnServersAreKnown)
     EXPECT_FALSE(official_address("192.168.1.20"));
     EXPECT_FALSE(official_address("my-gtps.example.net"));
 }
+
+TEST(PlayerStateTest, TheGameServerTheProxyPlaysOnDecides)
+{
+    // config.json may say www.growtopia1.com while the packets go to your
+    // own server: only where the proxy connected counts.
+    const auto local{ judge(std::make_pair(std::string{ "127.0.0.1" }, std::uint16_t{ 17091 })) };
+    EXPECT_FALSE(local.official);
+    EXPECT_EQ(local.game_server, "127.0.0.1:17091");
+    EXPECT_NE(local.why.find("your own server: the proxy plays on 127.0.0.1:17091"), std::string::npos);
+
+    EXPECT_FALSE(judge(std::make_pair(std::string{ "192.168.1.20" }, std::uint16_t{ 17091 })).official);
+    EXPECT_FALSE(judge(std::make_pair(std::string{ "gtps.example.net" }, std::uint16_t{ 17091 })).official);
+
+    const auto ubisoft{ judge(std::make_pair(std::string{ "213.179.209.168" }, std::uint16_t{ 17198 })) };
+    EXPECT_TRUE(ubisoft.official);
+    EXPECT_NE(ubisoft.why.find("213.179.209.168:17198 is one of Growtopia's own"), std::string::npos);
+
+    const auto none{ judge(std::nullopt) };
+    EXPECT_FALSE(none.official);
+    EXPECT_TRUE(none.game_server.empty());
+}

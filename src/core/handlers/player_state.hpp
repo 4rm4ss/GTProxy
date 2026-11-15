@@ -2,7 +2,9 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "../../packet/packet_types.hpp"
@@ -53,4 +55,15 @@ inline constexpr std::int32_t DOUBLE_JUMP{ 1 << 1 };
 [[nodiscard]] std::optional<std::vector<std::byte>> without_damage(std::span<const std::byte> packet);
 // Growtopia's own servers (by name or address).
 [[nodiscard]] bool official_address(std::string_view address);
+
+// Whether abilities may be changed: decided by the game server the proxy is
+// connected to (server_data.php's "server" or a redirect) - not by the name
+// in config.json, which may be www.growtopia1.com while the packets go to
+// your own server.
+struct Verdict {
+    bool official{ false };
+    std::string game_server;    // "host:port", or "" before any connection
+    std::string why;
+};
+[[nodiscard]] Verdict judge(const std::optional<std::pair<std::string, std::uint16_t>>& connected);
 }

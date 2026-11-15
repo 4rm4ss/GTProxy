@@ -1408,7 +1408,7 @@ modules::AbilitiesView ModuleSystem::abilities() const
 {
     const auto status{ mods_.status() };
     const auto& s{ status.settings };
-    return { status.allowed, status.why, status.state_known, status.state_made,
+    return { status.allowed, status.why, status.game_server, status.state_known, status.state_made,
         { s.speed, s.gravity, s.acceleration, s.water_speed, s.double_jump, s.noclip, s.range, s.god } };
 }
 

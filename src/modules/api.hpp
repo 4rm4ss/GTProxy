@@ -55,7 +55,8 @@ struct Abilities {
 
 struct AbilitiesView {
     bool allowed{ false };      // false on Growtopia's own servers
-    std::string why;
+    std::string why;            // the decision, with the game server's address
+    std::string game_server;    // "host:port" the proxy plays on ("" before connecting)
     bool state_known{ false };  // the server's character state was seen
     bool state_made{ false };   // none came: the usual values were used
     Abilities abilities;

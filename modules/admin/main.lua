@@ -97,15 +97,19 @@ local function tell_refused(a)
         return
     end
     refused_said = true
-    say("`4Admin mode is off here: ``this is one of Growtopia's own servers. It only works on your own server (config.json \"server\").")
+    say("`4Admin mode is off here: ``" .. gtproxy.text.sanitize(a.why) .. ".")
 end
 
 local first = apply()
 gtproxy.on("settings", function()
     tell_refused(apply())
 end)
+-- Each world: the decision and the game server it was made on, in the log.
 gtproxy.on("world_enter", function()
-    tell_refused(gtproxy.player.abilities())
+    local a = gtproxy.player.abilities()
+    gtproxy.log.info(string.format("Admin mode %s: %s", a.allowed and "allowed" or "refused", a.why))
+    refused_said = false
+    tell_refused(a)
 end)
 
 -- Saves what changed; returns the problems.
@@ -143,6 +147,9 @@ local function page()
     local d = gtproxy.dialog():header("Admin mode", ICON)
     if a.allowed then
         d:small("`oYour own server: `2on``. Now: `w" .. describe(a) .. "``")
+        if a.game_server ~= "" then
+            d:small("`oGame server: `w" .. gtproxy.text.sanitize(a.game_server) .. "``")
+        end
     else
         d:small("`4Off here: ``" .. gtproxy.text.sanitize(a.why))
     end

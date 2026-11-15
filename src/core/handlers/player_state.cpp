@@ -6,6 +6,8 @@
 #include <cstring>
 #include <string>
 
+#include <fmt/format.h>
+
 namespace core::player_state {
 namespace {
 constexpr std::size_t HEADER_AT{ sizeof(std::uint32_t) };
@@ -134,5 +136,18 @@ bool official_address(const std::string_view address)
     }
     return host.ends_with("growtopia1.com") || host.ends_with("growtopia2.com")
         || host.starts_with("213.179.208.") || host.starts_with("213.179.209.");
+}
+
+Verdict judge(const std::optional<std::pair<std::string, std::uint16_t>>& connected)
+{
+    if (!connected) {
+        return { false, {}, "not connected to a game server yet: decided by the one the proxy connects to" };
+    }
+    const auto where{ fmt::format("{}:{}", connected->first, connected->second) };
+    if (official_address(connected->first)) {
+        return { true, where, fmt::format(
+            "the game server {} is one of Growtopia's own (213.179.208-209.x, growtopia1/2.com): there these would be cheats against other players", where) };
+    }
+    return { false, where, fmt::format("your own server: the proxy plays on {}", where) };
 }
 }

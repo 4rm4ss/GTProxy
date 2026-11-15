@@ -1124,6 +1124,7 @@ private:
             sol::table out{ view_lua.create_table() };
             out["allowed"] = view.allowed;
             out["why"] = view.why;
+            out["game_server"] = view.game_server;
             out["state_known"] = view.state_known;
             out["state_made"] = view.state_made;
             out["speed"] = static_cast<double>(a.speed);
