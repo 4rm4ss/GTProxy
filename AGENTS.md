@@ -58,7 +58,7 @@ ctest --test-dir build --output-on-failure
 
 ```
 src/
-├── core/           # Application core, config, logging, scheduler, web server
+├── core/           # The empty core: config, logging, connections, session/inventory state, module system
 ├── network/        # ENet client/server connections
 ├── packet/         # Packet types, encoding/decoding, event handling
 │   ├── game/       # Game-specific packet handlers
@@ -67,15 +67,17 @@ src/
 ├── modules/        # Module loader: module.json, config/ profiles, Lua module API
 ├── world/          # World entity and state management
 ├── player/         # Player entity and state management
-├── command/        # In-proxy command system
-│   └── commands/   # Individual command implementations
+├── command/        # Chat commands and the /proxy menu frame (/proxy, /proxyhelp, /map)
+│   └── commands/   # The core's own commands (features are modules)
 ├── scripting/      # Lua scripting engine (sol2)
 │   └── bindings/   # Lua API bindings
 ├── event/          # Event dispatcher system
 └── utils/          # Utilities (ByteStream, TextParse, hash, random)
 
-modules/            # Modules shipped next to Proxy.exe (Lua, docs/modules.md)
+modules/            # The proxy's features as Lua modules (drop, worlds, looks, info, walk,
+                    # reachability), copied next to Proxy.exe (docs/modules.md)
 config/             # Default module settings and profiles, next to Proxy.exe
+                    # (modules keep their own data in data/<id>.json there)
 examples/modules/   # Example modules (not installed)
 docs/modules.md     # Module API and config documentation
 lib/                # External libs (enet, cpp-httplib) as Git submodules
@@ -195,6 +197,21 @@ When creating new Lua bindings or modifying existing ones:
 1.  **Create Test Script:** Add a new test script in `scripts/test_{feature_name}.lua` to verify the functionality.
 2.  **Document API:** Update [scripts/AGENTS.md](scripts/AGENTS.md) with the new Lua API.
 3.  **Example Usage:** Include example usage in the test script demonstrating common use cases.
+
+## Modules
+
+The core (`src/`) is an empty proxy: it forwards packets, tracks the session
+(world, position, inventory, players) and runs modules. Proxy features belong
+in `modules/<id>/` as Lua against the module API (`docs/modules.md`), not in
+the core.
+
+- New module API (`src/modules/api.hpp`, `src/modules/host.cpp`,
+  `src/core/module_system.cpp`): document it in `docs/modules.md` and test it in
+  `tests/modules/test_module_host.cpp` (against `tests/modules/fake_services.hpp`).
+- Shipped modules: `tests/modules/test_shipped_modules.cpp` loads them all and
+  checks their behaviour; pure Lua helpers get tests in `tests/modules/lua/`.
+- Behaviour against a fake game and server, with and without `modules/`:
+  `tests/e2e/run_e2e.py` (`E2E_NO_MODULES=1` for the empty core).
 
 ## Dependencies
 

@@ -113,7 +113,10 @@ jobs:
             if (-not (Test-Path $f)) { throw "missing $f" }
           }
           $log = (Get-Content stdout.log, $session.FullName -Raw -ErrorAction SilentlyContinue) -join "`n"
-          foreach ($m in "HTTPS server listening on port 443", "Proxy server listening on port 16999", "Loaded script: rainbow.lua") {
+          # The features are modules on top of the core: all of them must load.
+          $expected = @("HTTPS server listening on port 443", "Proxy server listening on port 16999")
+          foreach ($id in "drop", "info", "looks", "reachability", "walk", "worlds") { $expected += "Module '$id' 1.0.0 loaded from modules/$id" }
+          foreach ($m in $expected) {
             if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
           }
           $firewall = Select-String -Path $session.FullName -Pattern "Firewall" | ForEach-Object { $_.Line }

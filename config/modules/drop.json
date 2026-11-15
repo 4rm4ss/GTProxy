@@ -1,0 +1,4 @@
+{
+  "dialog_timeout_ms": 2000,
+  "ack_timeout_ms": 1500
+}

@@ -212,8 +212,10 @@ TEST(ModuleManifestTest, DiscoversModules)
     dir.write("modules/reachability/main.lua", "-- module");
     dir.write("modules/zz_copy/module.json", R"({ "id": "reachability", "version": "2.0.0", "api_version": 1, "main": "main.lua" })");
     dir.write("modules/zz_copy/main.lua", "");
-    dir.write("modules/future/module.json", R"({ "id": "future", "version": "1.0.0", "api_version": 2, "main": "main.lua" })");
+    dir.write("modules/future/module.json", R"({ "id": "future", "version": "1.0.0", "api_version": 3, "main": "main.lua" })");
     dir.write("modules/future/main.lua", "");
+    dir.write("modules/v2/module.json", R"({ "id": "v2", "version": "1.0.0", "api_version": 2, "main": "main.lua" })");
+    dir.write("modules/v2/main.lua", "");
     dir.write("modules/nomain/module.json", R"({ "id": "nomain", "version": "1.0.0", "api_version": 1, "main": "missing.lua" })");
     dir.write("modules/escape/module.json", R"({ "id": "escape", "version": "1.0.0", "api_version": 1, "main": "../evil.lua" })");
     dir.write("modules/badjson/module.json", R"({ "id": "badjson", )");
@@ -221,10 +223,12 @@ TEST(ModuleManifestTest, DiscoversModules)
     dir.write("modules/not_a_module/readme.txt", "no module.json here");
 
     const auto found{ modules::discover(dir.path() / "modules") };
-    ASSERT_EQ(found.modules.size(), 1u);
+    ASSERT_EQ(found.modules.size(), 2u);
     EXPECT_EQ(found.modules[0].id, "reachability");
     EXPECT_EQ(found.modules[0].version, "1.0.0");
     EXPECT_EQ(std::get<double>(found.modules[0].settings.at("radius")), 5.0);
+    EXPECT_EQ(found.modules[1].id, "v2");
+    EXPECT_EQ(found.modules[1].api_version, 2);
 
     std::string problems;
     for (const auto& problem : found.problems) {
@@ -232,7 +236,7 @@ TEST(ModuleManifestTest, DiscoversModules)
     }
     EXPECT_EQ(found.problems.size(), 6u) << problems;
     EXPECT_NE(problems.find("modules/zz_copy: id 'reachability' is already used by modules/reachability"), std::string::npos) << problems;
-    EXPECT_NE(problems.find("modules/future: needs module API version 2, this proxy has version 1"), std::string::npos) << problems;
+    EXPECT_NE(problems.find("modules/future: needs module API version 3, this proxy has versions 1 to 2"), std::string::npos) << problems;
     EXPECT_NE(problems.find("modules/nomain: missing.lua is missing"), std::string::npos) << problems;
     EXPECT_NE(problems.find("modules/escape: module.json: main '../evil.lua' must be a .lua file inside"), std::string::npos) << problems;
     EXPECT_NE(problems.find("modules/badjson: module.json: "), std::string::npos) << problems;

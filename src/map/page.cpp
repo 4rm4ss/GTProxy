@@ -74,7 +74,6 @@ button.active { border-color: var(--accent); color: var(--accent); }
   <span id="world">-</span>
   <span id="hover"></span>
   <span id="mode" class="chip wide" title="How paths are found (config.json: map.gravity)"></span>
-  <span id="cw" class="chip wide" title="/clickwalk in the game: clicking a tile walks there">click-walk off</span>
   <button id="center" title="Center on you (C)">Me</button>
   <button id="follow" title="Keep you in view (F)">Follow</button>
   <button id="stop" title="Stop walking (Esc)">Stop</button>
@@ -308,7 +307,7 @@ async function sendClick(sx, sy, button) {
       if (res.has_tile && res.marker) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, kind: res.kind, at: performance.now(), hold: 4000 }; dirty = true; }
       else { marker = null; dirty = true; }
       showInfo(res.message, res.detail, res.kind);
-    } else if (res.action === "right_click") {
+    } else if (res.action === "right_click" || res.action === "left_click") {
       if (res.message) toast(res.message, res.ok);
     } else {
       if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, at: performance.now(), hold: 900 }; dirty = true; }
@@ -400,8 +399,6 @@ async function poll(now) {
   $("dot").title = !online ? "Proxy not running" : (state.connected ? "Connected to the game server" : "Proxy running, game not connected");
   $("world").textContent = !online ? "proxy offline" : (state.in_world ? (state.world || "?") : "not in a world");
   $("mode").textContent = state.gravity ? "paths: on foot" : "paths: free";
-  $("cw").textContent = state.click_walk ? "click-walk on" : "click-walk off";
-  $("cw").classList.toggle("on", !!state.click_walk);
   dirty = true;
   polling = false;
   pollTimer = setTimeout(() => poll(false), online ? 200 : 1000);

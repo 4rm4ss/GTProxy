@@ -2,57 +2,55 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
-#include "../core/handlers/feature_handler.hpp"
-#include "../core/handlers/inventory_handler.hpp"
+#include "../core/handlers/session_handler.hpp"
 #include "../packet/message/dialog.hpp"
 
 namespace command {
 class CommandRegistry;
 
-// The /proxy menu: game dialogs (only you see them) with pages for worlds,
-// items, looks and info. Buttons run the same code as the chat commands.
+// The /proxy menu frame: a game dialog (only you see it) with where you are,
+// a section per module page (modules add them) and the list of commands.
+// The pages themselves belong to the modules.
 class Menu {
 public:
-    enum class Page { Main, Worlds, Items, Looks, Info, Inventory, DropAll, Commands };
+    struct Section {
+        std::string title;
+        int icon{ 0 };
+        std::string button;     // dialog button that opens the module's page
+        std::string label;
+        int order{ 100 };
+    };
 
+    using Sections = std::function<std::vector<Section>()>;
+    using StatusLines = std::function<std::vector<std::string>()>;
     using Runner = std::function<bool(const std::string&)>;
 
-    Menu(
-        core::handlers::FeatureHandler& features,
-        core::handlers::InventoryHandler& inventory,
-        const CommandRegistry& registry,
-        Runner run
-    );
+    Menu(core::handlers::SessionHandler& session, const CommandRegistry& registry, Runner run);
 
-    void show(Page page) const;
-    [[nodiscard]] std::string build(Page page) const;
+    // Where the module sections and status lines come from.
+    void set_sources(Sections sections, StatusLines status);
 
-    // True when the dialog belongs to the menu (it is then fully handled and
-    // must not reach the game server).
-    [[nodiscard]] static bool owns(std::string_view dialog_name);
-    void handle(const packet::message::DialogReturn& dialog);
-
-    // Items /dropall would drop and those it keeps (with the reason).
-    struct DropPlan {
-        std::vector<core::handlers::InventoryHandler::Job> drop;
-        std::vector<std::pair<core::inventory::Item, core::handlers::InventoryHandler::KeepReason>> keep;
-    };
-    [[nodiscard]] DropPlan plan_drop_all() const;
-
-private:
+    void show_main() const;
+    void show_commands() const;
     [[nodiscard]] std::string main_page() const;
-    [[nodiscard]] std::string worlds_page() const;
-    [[nodiscard]] std::string items_page() const;
-    [[nodiscard]] std::string looks_page() const;
-    [[nodiscard]] std::string info_page() const;
-    [[nodiscard]] std::string inventory_page() const;
-    [[nodiscard]] std::string drop_all_page() const;
     [[nodiscard]] std::string commands_page() const;
 
-    core::handlers::FeatureHandler& features_;
-    core::handlers::InventoryHandler& inventory_;
+    // True when the dialog is the proxy's (gtproxy_*): it never reaches the
+    // game server.
+    [[nodiscard]] static bool owns(std::string_view dialog_name);
+    // The frame's own buttons: page_main (<< Menu), commands, map.
+    [[nodiscard]] static bool frame_button(std::string_view button);
+    // Answers the frame's own buttons. False if the button is not one of
+    // them (it is a module's).
+    bool handle(const packet::message::DialogReturn& dialog) const;
+
+private:
+    core::handlers::SessionHandler& session_;
     const CommandRegistry& registry_;
     Runner run_;
+    Sections sections_;
+    StatusLines status_;
 };
 }

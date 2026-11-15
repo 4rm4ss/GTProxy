@@ -16,11 +16,28 @@
    установите "Microsoft Visual C++ Redistributable" (x64) с сайта Microsoft.
    Порт 443 должен быть свободен (его иногда занимают Skype, IIS, VMware).
 
+Как устроен прокси:
+   Proxy.exe - пустое ядро: пересылает пакеты между игрой и сервером и знает,
+   где вы (мир, позиция, инвентарь, игроки). Все функции - модули в папке
+   modules\ рядом с Proxy.exe, их можно выключать и добавлять:
+   modules\drop          предметы и дроп: /inv /dropall /daw /dd /dw /ddl /db
+                         /drop /fastdrop /fasttrash /keep /balance
+   modules\worlds        миры: /warp /back /rejoin /exit
+   modules\looks         внешний вид: /nick /netid /skin /rainbow
+   modules\info          информация: /pos /players /world /find /item /debug
+   modules\walk          ходьба: левый клик на карте, /goto, /clickwalk
+   modules\reachability  проверка доступности: правый клик на карте, /reach
+   В самом ядре только /proxy (меню), /proxyhelp (все команды) и /map.
+   Без папки modules\ прокси просто пересылает пакеты: /dropall и другие
+   команды тогда уходят на сервер как обычный чат.
+
 Команды прокси (пишите в чат игры, на сервер они не уходят):
    /proxy               меню прокси: миры, предметы, внешний вид, информация
+                        (страницы добавляют модули)
    /warp МИР [дверь]    перейти в мир (или к двери в нём)
    /back                вернуться в предыдущий мир
    /rejoin              перезайти в текущий мир
+   /exit                выйти из мира
    /nick имя            другой ник над вами - видите только вы; /nick - вернуть
    /netid               показать/скрыть netID у ников (только у вас)
    /pos                 ваши координаты (клетки)
@@ -40,6 +57,9 @@
    /fasttrash           то же для мусорки (на замки не действует)
    /keep add предмет    предмет, который /dropall никогда не выкидывает
    /balance             сколько у вас замков в пересчёте на WL
+                        (быстрый дроп, пауза и список /keep хранятся в
+                        data\drop.json; старый gtproxy-settings.txt переносится
+                        туда сам при первом запуске)
    /proxyhelp           окно со списком всех команд (и в меню /proxy)
    /map                 окно с картой мира (см. ниже)
    /goto X Y            дойти до клетки X, Y; /goto stop - остановиться
@@ -65,15 +85,20 @@
    Если сервер переставит вас (дверь, возрождение) - ходьба прекращается.
    Настройки - раздел "map" в config.json (порт, скорость, gravity).
 
-Модули и профили (папки modules\ и config\ рядом с Proxy.exe):
+Модули и профили (папки modules\, config\ и data\ рядом с Proxy.exe):
    Модуль - папка с module.json и main.lua внутри modules\. Чтобы поставить
    модуль, скопируйте его папку в modules\ и перезапустите Proxy.exe; в окне
    прокси появится строка "Module '...' loaded" (или причина, почему нет).
-   Проверка по правому клику, /reach и reach - это модуль modules\reachability.
+   Чтобы убрать функцию - выключите её модуль в config\modules.json
+   ("enabled": false, затем cfg reload) или удалите его папку.
    config\modules.json         - какие модули включены ("enabled": false -
                                  выключить) и профиль при запуске
-   config\modules\<id>.json    - настройки модуля (для reachability:
-                                 show_marker, show_steps, log_result)
+   config\modules\<id>.json    - настройки модуля (drop: dialog_timeout_ms,
+                                 ack_timeout_ms; worlds: exit_timeout_ms;
+                                 looks: rainbow_ms; walk: tell_game;
+                                 reachability: show_marker, show_steps,
+                                 log_result)
+   data\<id>.json              - что модуль запомнил сам (пишет прокси)
    config\profiles\<имя>.json  - профиль: меняет отдельные настройки
    Порядок: настройки модуля по умолчанию -> config\modules\<id>.json ->
    активный профиль. Команды в окне Proxy.exe (набрать и Enter):

@@ -277,7 +277,9 @@ def check_module_log(log):
     check(log.count("Module 'reachability' 1.0.0 loaded from modules/reachability") == 2,
           "reachability loaded at start and again after being switched back on")
     check("Module 'whereami' 1.0.0 loaded from modules/whereami" in log, "copied example module whereami loaded")
-    check("Module skipped: modules/badapi: needs module API version 99, this proxy has version 1: not loaded" in log,
+    for module in ("drop", "info", "looks", "walk", "worlds"):
+        check(f"Module '{module}' 1.0.0 loaded from modules/{module}" in log, f"shipped module {module} loaded")
+    check("Module skipped: modules/badapi: needs module API version 99, this proxy has versions 1 to 2: not loaded" in log,
           "module asking for another API version: logged, not loaded")
     check("Module skipped: modules/zz_reach_copy: id 'reachability' is already used by modules/reachability: not loaded" in log,
           "duplicate module id: logged, not loaded")
@@ -459,7 +461,8 @@ def main():
           f"modules/ and config/ found next to the executable, started from another folder ({modules_line.split('] ')[-1]})")
 
     if no_modules:
-        check("No modules/ folder next to the proxy: running without modules" in log, "no modules/: the proxy says so and runs")
+        check("No modules/ folder next to the proxy: running without modules (the proxy only forwards packets)" in log,
+              "no modules/: the proxy says so and runs as an empty core")
         check("Unknown console command 'reach'" in log, "no modules/: console 'reach' is not a command")
         check("Module '" not in log, "no modules/: no module loaded")
     else:

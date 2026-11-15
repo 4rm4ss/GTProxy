@@ -7,25 +7,33 @@
 #include <string_view>
 #include <vector>
 
-#include "handlers/feature_handler.hpp"
+#include "handlers/inventory_handler.hpp"
 #include "handlers/map_handler.hpp"
-#include "../command/command_registry.hpp"
+#include "handlers/session_handler.hpp"
+#include "../command/command_handler.hpp"
+#include "../event/event.hpp"
 #include "../modules/api.hpp"
 #include "../modules/host.hpp"
 #include "../modules/settings.hpp"
 
 namespace core {
-// The proxy side of modules/ and config/ (both next to Proxy.exe):
+// The proxy side of modules/, config/ and data/ (all next to Proxy.exe):
 // finds and runs the modules, works out their settings from the active
-// profile, offers them the module API (map clicks, world, reachability,
-// map window, log) and runs the console's "cfg" commands.
+// profile, offers them the module API (docs/modules.md), passes them the
+// proxy's events and runs the console's "cfg" commands.
+//
+// The proxy's features (drop, worlds, looks, info, walking, reachability)
+// are all modules; without modules/ the proxy only forwards packets and
+// keeps track of where you are.
 class ModuleSystem final : public modules::Services {
 public:
     ModuleSystem(
         const std::filesystem::path& app_dir,
+        event::Dispatcher& dispatcher,
+        handlers::SessionHandler& session,
+        handlers::InventoryHandler& inventory,
         handlers::MapHandler& map,
-        handlers::FeatureHandler& features,
-        command::CommandRegistry& registry
+        command::CommandHandler& commands
     );
     ~ModuleSystem() override;
 
@@ -40,11 +48,32 @@ public:
 
     [[nodiscard]] const std::string& profile() const { return profile_; }
 
+    // Runs the modules' timers; called from the main loop.
+    void update();
+
     // modules::Services
     [[nodiscard]] modules::WorldView world() const override;
     [[nodiscard]] modules::ReachView reach(map::TilePos tile) override;
     bool show(const map::Card& card) override;
     void reply(modules::Source source, const std::string& module_id, const std::string& text) override;
+
+    [[nodiscard]] std::vector<modules::PlayerInfo> players() const override;
+    [[nodiscard]] std::vector<modules::ObjectInfo> objects() const override;
+    [[nodiscard]] std::optional<modules::TileInfo> tile(map::TilePos tile) const override;
+    [[nodiscard]] modules::InventoryView inventory() const override;
+    [[nodiscard]] bool items_loaded() const override;
+    [[nodiscard]] std::optional<modules::ItemView> item(std::uint32_t id) const override;
+    [[nodiscard]] std::vector<modules::ItemView> find_items(std::string_view query, std::size_t limit) const override;
+    [[nodiscard]] char prefix() const override;
+
+    void game_message(const std::string& text) override;
+    void game_dialog(const std::string& markup) override;
+    bool game_call(const modules::CallOut& call) override;
+    bool server_text(const std::string& text, bool game_message) override;
+
+    modules::WalkView walk_to(map::TilePos tile) override;
+    modules::WalkView walk_stop() override;
+    [[nodiscard]] bool walking() const override;
 
 private:
     void cfg(const std::vector<std::string>& words);
@@ -56,12 +85,27 @@ private:
     // Keeps the chat commands in line with the loaded modules' commands.
     void sync_commands();
 
+    // Packets the modules hear about.
+    void listen_packets();
+    template <typename Packet>
+    void hook_call(const event::Event& event);
+    void on_tile_change(const event::Event& event);
+    void on_object(const event::Event& event);
+
+    // gtproxy-settings.txt of earlier versions -> data/drop.json
+    void import_old_settings(const std::filesystem::path& app_dir) const;
+
     std::filesystem::path modules_dir_;
+    std::filesystem::path data_dir_;
     modules::ConfigDir config_;
+    event::Dispatcher& dispatcher_;
+    handlers::SessionHandler& session_;
+    handlers::InventoryHandler& inventory_;
     handlers::MapHandler& map_;
-    handlers::FeatureHandler& features_;
+    command::CommandHandler& commands_;
     command::CommandRegistry& registry_;
     modules::ModuleHost host_;
+    std::vector<event::ScopedHandle> handles_;
 
     std::string profile_{ "default" };
     std::map<std::string, bool> enabled_;   // per module, from config/modules.json

@@ -58,10 +58,11 @@ std::expected<Manifest, std::string> read_manifest(const std::filesystem::path& 
     if (manifest.version.empty()) {
         return std::unexpected{ "module.json: version is missing" };
     }
-    if (manifest.api_version != API_VERSION) {
+    if (manifest.api_version < MIN_API_VERSION || manifest.api_version > API_VERSION) {
         return std::unexpected{ fmt::format(
-            "needs module API version {}, this proxy has version {}: not loaded",
+            "needs module API version {}, this proxy has versions {} to {}: not loaded",
             manifest.api_version,
+            MIN_API_VERSION,
             API_VERSION
         ) };
     }

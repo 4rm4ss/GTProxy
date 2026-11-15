@@ -25,43 +25,12 @@ TEST(FeaturesTest, WorldNames)
     EXPECT_FALSE(normalize_world_name("WORLD|DOOR"));
     EXPECT_FALSE(normalize_world_name("wörld"));
 
-    EXPECT_EQ(normalize_door_id("shop_1"), "SHOP_1");
-    EXPECT_FALSE(normalize_door_id(""));
-    EXPECT_FALSE(normalize_door_id("a|b"));
-}
-
-TEST(FeaturesTest, ReplaceFieldKeepsEveryOtherLine)
-{
-    const std::string spawn{
-        "spawn|avatar\nnetID|7\nuserID|123\neid|abc\nip|x\ncolrect|0|0|20|30\nposXY|1600|736\n"
-        "name|`wPlayer``\ntitleIcon|{\"PlayerWorldID\":7}\ncountry|ru\ninvis|0\nmstate|0\nsmstate|0\n"
-        "onlineID|\nnewField|42\ntype|local"
-    };
-
-    const auto replaced{ replace_field(spawn, "name", "`wNick`` `4[7]``") };
-    ASSERT_TRUE(replaced);
-
-    std::string expected{ spawn };
-    expected.replace(expected.find("`wPlayer``"), std::string{ "`wPlayer``" }.size(), "`wNick`` `4[7]``");
-    EXPECT_EQ(*replaced, expected);
-
-    EXPECT_EQ(field_value(*replaced, "name"), "`wNick`` `4[7]``");
-    EXPECT_EQ(field_value(spawn, "titleIcon"), "{\"PlayerWorldID\":7}");
-    EXPECT_EQ(field_value(spawn, "type"), "local");
-    EXPECT_EQ(field_value(spawn, "onlineID"), "");
-    EXPECT_FALSE(field_value(spawn, "nam"));
-    EXPECT_FALSE(replace_field(spawn, "missing", "x"));
-    // A key is matched as a whole: "netID" must not match "netIDx|".
-    EXPECT_EQ(replace_field("netIDx|1\nnetID|2", "netID", "9"), "netIDx|1\nnetID|9");
 }
 
 TEST(FeaturesTest, NamesAndSanitizing)
 {
     EXPECT_EQ(strip_colors("`2Hello`` `4[5]``"), "Hello [5]");
     EXPECT_EQ(sanitize("a|b\nc\rd"), "abcd");
-    EXPECT_EQ(colored_name("Bob"), "`wBob``");
-    EXPECT_EQ(colored_name("`2Bob``"), "`2Bob``");
-    EXPECT_EQ(colored_name("Bo|b"), "`wBob``");
 }
 
 TEST(FeaturesTest, DialogReturnIsDecodedAndFieldsJoined)

@@ -1,23 +1,25 @@
 # Modules and profiles
 
-Modules add features to the proxy without rebuilding it. Each is a folder of
-Lua code; its settings are JSON files you edit, and profiles switch groups of
-settings at once. Both folders sit **next to `Proxy.exe`**, whatever folder
-the proxy is started from:
+The proxy itself is an **empty core**: it forwards packets between the game
+and the server, keeps track of where you are (world, position, inventory,
+players) and offers that to modules. Every feature — drop tools, warping,
+nick/netIDs, info commands, walking, the reachability check — is a module on
+top of it. Without `modules/` the proxy only forwards.
+
+Each module is a folder of Lua code; its settings are JSON files you edit, and
+profiles switch groups of settings at once. All of it sits **next to
+`Proxy.exe`**, whatever folder the proxy is started from:
 
 ```
 Proxy.exe
-modules/
-  reachability/
-    module.json
-    main.lua
-config/
+modules/              the features, one folder each
+  drop/  info/  looks/  reachability/  walk/  worlds/
+config/               settings you edit
   modules.json
-  modules/
-    reachability.json
-  profiles/
-    default.json
-    test.json
+  modules/<id>.json
+  profiles/default.json, test.json
+data/                 what modules remember (written by the proxy)
+  drop.json ...
 ```
 
 The Lua scripts in `scripts/` keep working as before; modules are separate
@@ -28,35 +30,36 @@ below).
 
 1. Copy the module's folder into `modules/` (for example
    `modules/whereami/` with its `module.json` and `main.lua`).
-2. Restart the proxy. The log says `Module 'whereami' 1.0.0 loaded ...`, or
-   why it was not loaded.
+2. Restart the proxy. The log says `Module 'whereami' 1.0.0 loaded ...` with
+   its events and commands, or why it was not loaded.
 3. Optional: put its settings in `config/modules/<id>.json` and switch it off
    or on in `config/modules.json`.
 
 A module that is not listed in `config/modules.json` is on. A broken module
 never stops the others: the log names the folder and the reason, and the rest
-load as usual.
+load as usual. To remove a feature, switch its module off (`"enabled": false`
+and `cfg reload`) or delete its folder.
 
 ## module.json
 
 ```json
 {
-  "id": "reachability",
+  "id": "drop",
   "version": "1.0.0",
-  "api_version": 1,
+  "api_version": 2,
   "main": "main.lua",
-  "name": "Reachability check",
+  "name": "Items and drop",
   "description": "...",
   "author": "...",
-  "settings": { "show_marker": true, "show_steps": true, "log_result": true }
+  "settings": { "dialog_timeout_ms": 2000, "ack_timeout_ms": 1500 }
 }
 ```
 
 | Key | |
 |-----|-|
-| `id` | Unique name: `a-z`, `0-9`, `_`, `-`. Names its settings file `config/modules/<id>.json`. |
+| `id` | Unique name: `a-z`, `0-9`, `_`, `-`. Names its settings file `config/modules/<id>.json` and its data file `data/<id>.json`. |
 | `version` | The module's own version, shown in the log. |
-| `api_version` | Module API it is written for. This proxy offers **1**; a module asking for another version is not loaded (the log says so). |
+| `api_version` | Module API it is written for. This proxy offers **1 and 2** (2 only adds to 1); a module asking for another version is not loaded (the log says so). |
 | `main` | Lua file that is run, inside the module's folder. |
 | `settings` | Default settings. Each value is `true`/`false`, a number or text, and fixes that setting's type. |
 | `name`, `description`, `author` | Optional. |
@@ -69,7 +72,7 @@ not loaded.
 
 | File | |
 |------|-|
-| `config/modules.json` | Which modules are on, and the profile used at start: `{ "profile": "default", "modules": { "reachability": { "enabled": true } } }` |
+| `config/modules.json` | Which modules are on, and the profile used at start: `{ "profile": "default", "modules": { "drop": { "enabled": true } } }` |
 | `config/modules/<id>.json` | Settings of one module: `{ "show_steps": false }` |
 | `config/profiles/<name>.json` | Overrides: `{ "description": "...", "modules": { "reachability": { "show_marker": false } } }` |
 
@@ -93,11 +96,20 @@ type, the log shows the file, the place and the reason, and **the settings in
 force stay as they were**. `cfg exec` does not change `config/modules.json`:
 the next start uses the profile named there.
 
-## Module API version 1
+Settings are what you configure; what a module changes while you play (fast
+drop on/off, the keep list ...) it keeps in `data/<id>.json` itself
+(`gtproxy.store`).
+
+## The module API
 
 Everything a module can use is in the global table `gtproxy`. Modules have the
 Lua standard libraries `string`, `table`, `math`, `utf8`, `coroutine` and the
 base functions (without `dofile`/`loadfile`); `print` writes to the proxy log.
+`gtproxy.api_version` is the proxy's API version (2); `gtproxy.module` holds
+`id`, `version` and `name` of the module itself; `gtproxy.prefix` is the chat
+command prefix (`"/"`).
+
+Version 1 is marked **(1)** below; everything else is version 2.
 
 ### Events
 
@@ -108,8 +120,38 @@ gtproxy.on("right_click", function(e)
 end)
 ```
 
-`right_click` is the only event of API 1. If no module handles it, the map
-window says so.
+| Event | Fields | When |
+|-------|--------|------|
+| `right_click` **(1)** | `x`, `y`, `in_world` | Right click in the map window. Answer with `gtproxy.show`. |
+| `left_click` | `x`, `y`, `in_world` | Left click on a tile of the map window. Answer with `gtproxy.show`. |
+| `tile_click` | `x`, `y`, `item` | The game punches / builds on a tile. Return `"cancel"` and the server never gets it. |
+| `dialog` | `name`, `button`, `values`, `frame` | A button of a proxy dialog (`gtproxy_*`). `values`: the dialog's inputs and checkboxes (`"1"`/`"0"`) by name. `frame`: the button belongs to the menu frame (`page_main`, `commands`, `map`), which answers it after the modules — apply your page's settings, open nothing. |
+| `world_enter` | `name`, `previous` | The world's data arrived. |
+| `world_menu` | | The server shows the world menu (you left the world). |
+| `disconnect` | | The game or the server disconnected. |
+| `inventory` | `full`, `item`, `removed`, `added`, `count` | The whole inventory arrived (`full`), or one item changed (`count`: how many you have now). |
+| `object` | `change`, `item`, `amount`, `object_id`, `by_me` | A dropped object: `change` -1 = dropped, a netID = that player collected it. |
+| `walk_end` | `message`, `notify` | A walk ended. `notify`: arrived, stopped by the server or a blocked way (not when you left the world or pressed Stop). |
+
+If no module handles a map window click, the window says so. A handler that
+fails is logged and does not stop the others.
+
+### Changing what the server tells the game
+
+```lua
+gtproxy.hook_call("OnNameChanged", function(call)
+    -- call.name, call.net_id, call.args (the arguments after the name)
+    call.args[1] = call.args[1] .. " `4[" .. call.net_id .. "]``"
+    return "replace"        -- the game gets the changed call
+end)
+```
+
+Hookable calls: `OnSpawn`, `OnRemove`, `OnNameChanged`, `OnDialogRequest`,
+`OnSetPos`, `OnRequestWorldSelectMenu`. Return nothing to let the call through
+unchanged, `"replace"` to send your changed `call.args` / `call.net_id`, or
+`"cancel"` to keep it from the game (later hooks do not see it). Numbers keep
+the type the server sent; vectors are `{ x =, y = }`. The proxy's own state
+(world, players, position) is already updated when hooks run.
 
 ### Commands
 
@@ -121,12 +163,14 @@ gtproxy.command("reach", "Can you get to a tile: reach <x> <y>", function(args, 
 end)
 ```
 
-One name gives both `/name` in the game and `name` in the proxy console.
-Names are `a-z`, `0-9`, `_`; the proxy's own commands and those of other
-modules cannot be taken (the log says so and the command is not added). The
-game's font has no Cyrillic: answer the game in English.
+**(1)** One name gives both `/name` in the game and `name` in the proxy
+console; the game sends `/Name` as well. Names are `a-z`, `0-9`, `_`; the
+proxy's own commands (`/proxy`, `/proxyhelp`, `/map`) and those of scripts
+and other modules cannot be taken (the log says so, the command is not added
+and `gtproxy.command` returns false). The game's font has no Cyrillic: answer
+the game in English.
 
-### Settings
+### Settings **(1)**
 
 ```lua
 gtproxy.setting("show_steps")   --> true / false / number / text
@@ -136,15 +180,88 @@ Always the value in force (defaults → `config/modules/<id>.json` → profile);
 after `cfg exec` the next call returns the new value. Asking for a setting the
 module does not declare is an error.
 
-### World
+### World, players, items
 
 ```lua
 local w = gtproxy.world.info()
--- w.in_world, w.name, w.width, w.height (tiles)
--- w.me: { x, y (world pixels), tile_x, tile_y } or nil while unknown
+-- (1) w.in_world, w.name, w.width, w.height (tiles)
+-- (1) w.me: { x, y (world pixels), tile_x, tile_y } or nil while unknown
+-- w.connected, w.previous, w.recent (worlds entered, newest first),
+-- w.net_id (yours, -1 outside a world), w.real_name
+
+gtproxy.world.players()   -- { { net_id, user_id, name, country, invisible, is_local, x, y, tile_x, tile_y } ... }
+gtproxy.world.objects()   -- dropped items: { { object_id, item, amount, x, y } ... }
+gtproxy.world.tile(x, y)  -- { fg, bg, flags, cell ("free", "solid", "platform", "dangerous", "door"), text } or nil
+
+gtproxy.inventory.info()  -- { known, slots, items = { { id, count, flags } ... } }  (flags 0x01 = worn)
+gtproxy.inventory.count(id)
+
+gtproxy.items.loaded()            -- items.dat received?
+gtproxy.items.get(id)             -- { id, name, type, rarity, max_amount, untradeable } or nil
+gtproxy.items.find("lock", 12)    -- items whose name contains the text
 ```
 
-### Reachability
+### Talking to the game and the server
+
+```lua
+gtproxy.game.message("`oHello")               -- a line in the game's console
+gtproxy.game.dialog(markup)                   -- open a dialog (OnDialogRequest markup)
+gtproxy.game.call("OnChangeSkin", net_id, gtproxy.u32(0xFF0000FF))   -- any call to the game
+gtproxy.server.text("action|drop\n|itemID|2\n")                       -- as the game sends it (generic text)
+gtproxy.server.game_text("action|join_request\nname|START\ninvitedWorld|0")   -- game message type
+```
+
+`game.call` arguments: text, numbers (whole numbers are sent signed, others
+as floats), `gtproxy.u32(n)` / `gtproxy.i32(n)` / `gtproxy.f32(n)` for a
+given type, `gtproxy.vec2(x, y)`. `server.*` returns false when not connected
+to the game server. Only `server.*` reaches the server; everything else only
+changes what your own game shows.
+
+Dialogs are easiest with the builder (the markup the game understands):
+
+```lua
+local markup = gtproxy.dialog()
+    :header("Items", 448)                 -- big title with an item icon
+    :small("`oBackpack: 12 items")        -- also :text, :item(text, icon), :section(title, icon)
+    :input("amount", "Amount:", "", 5)    -- name, label, value, max length
+    :checkbox("fast", "Fast drop", true)
+    :button("go", "Go")
+    :spacer()
+    :button("page_main", "<< Menu")
+    :finish("gtproxy_items", "Apply")     -- dialog name (gtproxy_*), OK button (optional)
+gtproxy.game.dialog(markup)
+```
+
+Name proxy dialogs `gtproxy_<something>`: the proxy keeps them from the
+server and passes their buttons to the modules (`dialog` event). Button names
+are shared by all modules, so make them distinct.
+
+### The /proxy menu
+
+```lua
+gtproxy.menu.add({
+    title = "Items", icon = 448, order = 20,
+    button = "page_items", label = "Drop all, locks, fast drop",
+    status = function() return "`oDropping..." end,   -- optional: line(s) on the first page
+})
+```
+
+The menu frame (where you are, the map window, all commands) belongs to the
+core; each module adds a section with a button that opens its own page (the
+module answers the button in its `dialog` handler).
+
+### Walking
+
+```lua
+local walk = gtproxy.walk.to(x, y)   -- { ok, message, x, y }; a block: walks next to it
+gtproxy.walk.stop()
+gtproxy.walk.active()
+```
+
+The proxy's walking engine (a path over free tiles, sent as the game's own
+movement at walking speed). The `walk_end` event tells how it ended.
+
+### Reachability **(1)**
 
 ```lua
 local r = gtproxy.reach(x, y)
@@ -166,7 +283,7 @@ must fit in every tile on the way. It only answers; nothing is sent.
 | `tile_text` | What is on the tile, e.g. `"Rock (10) on Cave Background (14) - solid."` |
 | `summary` | One line for the log with your position, the tile and the result |
 
-### Map window
+### Map window **(1)**
 
 ```lua
 gtproxy.show({
@@ -176,13 +293,34 @@ gtproxy.show({
     marker = true,      -- mark the tile
     x = 0, y = 4,       -- optional, the clicked tile by default
     status = "reachable",   -- optional tag for tools
+    toast = false,      -- (2) a short note at the bottom instead of a card
 })
 ```
 
-The answer to the right click being handled; returns false (and shows
-nothing) outside a `right_click` handler.
+The answer to the click being handled; returns false (and shows nothing)
+outside a `right_click` / `left_click` handler.
 
-### Log
+### Timers, data, more files
+
+```lua
+local id = gtproxy.after(2000, function() ... end)   -- once, after 2 s
+local id = gtproxy.every(200, function() ... end)    -- every 200 ms
+gtproxy.cancel(id)                                   -- nil is fine
+gtproxy.now()                                        -- milliseconds, for differences
+
+gtproxy.store.get("fast_drop", false)   -- from data/<id>.json, or the default
+gtproxy.store.set("fast_drop", true)    -- true/false, a number, text; nil removes it
+
+local items = gtproxy.load("items.lua") -- another Lua file of the module's folder, run once
+gtproxy.text.strip_colors("`2Hi``")     -- "Hi"
+gtproxy.text.sanitize(text)             -- without '|' and line breaks (safe in dialogs)
+```
+
+Timers run on the proxy's main loop (at least 10 ms apart). A repeating timer
+that fails is stopped. A broken `data/<id>.json` is reported; the module
+starts without it and the broken file is kept as `<id>.json.broken`.
+
+### Log **(1)**
 
 ```lua
 gtproxy.log.info("text")    -- also .warn and .error; lines start with [<id>]
@@ -190,17 +328,26 @@ gtproxy.log.info("text")    -- also .warn and .error; lines start with [<id>]
 
 ### Limits
 
-- A handler or command that runs longer than 2 seconds is stopped; the log
-  says which module.
+- A handler, timer or command that runs longer than 2 seconds is stopped; the
+  log says which module.
 - An error in a module's code is logged with the file and line; other
   modules and handlers keep working.
-- `gtproxy.module` holds `id`, `version` and `name` of the module itself;
-  `gtproxy.api_version` is 1.
+- A module only reaches the server through `gtproxy.server.*`.
 
 ## The modules shipped with the proxy
 
-- `modules/reachability`: right click in the map window, `/reach X Y` in the
-  game, `reach X Y` in the console. Settings: `show_marker`, `show_steps`,
-  `log_result`.
-- `examples/modules/whereami` (not installed): a short example to copy into
-  `modules/`.
+| Module | Commands | Menu page | Settings |
+|--------|----------|-----------|----------|
+| `drop` | `/inv`, `/dropall [now\|stop\|speed <ms>]`, `/daw`, `/dd [WL]`, `/dw`, `/ddl`, `/db [amount]`, `/drop <item> [amount]`, `/fastdrop`, `/fasttrash`, `/keep [add\|del] <item>`, `/balance` | Items (inventory, drop all, locks, fast drop/trash, pause) | `dialog_timeout_ms`, `ack_timeout_ms`; your choices in `data/drop.json` |
+| `worlds` | `/warp <world> [door]`, `/back`, `/rejoin`, `/exit` | Worlds (warp, back, recent worlds) | `exit_timeout_ms` |
+| `looks` | `/nick [name]`, `/netid`, `/skin [hex] <code>`, `/rainbow [ms]` | Looks | `rainbow_ms` |
+| `info` | `/pos`, `/players`, `/world`, `/find <name>`, `/item <id>`, `/debug ...` | Info | |
+| `walk` | `/goto <x> <y>`, `/goto stop`, `/clickwalk`; left click in the map window | | `tell_game` |
+| `reachability` | `/reach <x> <y>` (and `reach x y` in the console); right click in the map window | | `show_marker`, `show_steps`, `log_result` |
+
+The core keeps `/proxy` (the menu frame), `/proxyhelp` (all commands) and
+`/map` (open the map window).
+
+`examples/modules/whereami` (not installed) is a short API 1 example to copy
+into `modules/`. Item settings of earlier versions (`gtproxy-settings.txt`)
+are moved to `data/drop.json` on the first start.

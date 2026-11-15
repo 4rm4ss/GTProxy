@@ -1,0 +1,12 @@
+{
+  "id": "walk",
+  "version": "1.0.0",
+  "api_version": 2,
+  "main": "main.lua",
+  "name": "Walking",
+  "description": "Left click in the map window, /goto <x> <y> and /clickwalk: walk to a tile.",
+  "author": "GTProxy",
+  "settings": {
+    "tell_game": true
+  }
+}

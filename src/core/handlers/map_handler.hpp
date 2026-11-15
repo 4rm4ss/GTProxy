@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include "feature_handler.hpp"
+#include "session_handler.hpp"
 #include "../config.hpp"
 #include "../../event/event.hpp"
 #include "../../map/bridge.hpp"
@@ -23,7 +23,7 @@
 #include "../../packet/payload.hpp"
 
 namespace core::handlers {
-// Click handling behind the map window, /goto and /clickwalk.
+// The map window's clicks and the walking engine modules use.
 //
 // A click becomes a tile (cursor -> tile with the window's view), the tile
 // becomes a path (A* over the world's blocks), and the path is walked: the
@@ -64,19 +64,22 @@ public:
         [[nodiscard]] std::string summary() const;
     };
 
-    // A right click in the map window is answered by the modules: handled
-    // tells whether any module listens, card is what one of them showed.
-    struct RightClickAnswer {
+    // A click in the map window is answered by the modules: handled tells
+    // whether any module listens, card is what one of them showed.
+    struct ClickAnswer {
         bool handled{ false };
         std::optional<map::Card> card;
     };
-    using RightClickHook = std::function<RightClickAnswer(map::TilePos tile)>;
+    using ClickHook = std::function<ClickAnswer(map::MouseButton button, map::TilePos tile)>;
+    // A walk ended: why, and whether to tell the player (arrived, stopped by
+    // the server or a blocked way; not when you left the world or pressed Stop).
+    using WalkEndHook = std::function<void(const std::string& message, bool notify)>;
 
     MapHandler(
         event::Dispatcher& dispatcher,
         network::Server& server,
         network::Client& client,
-        FeatureHandler& features,
+        SessionHandler& session,
         const Config::MapConfig& config,
         map::Bridge& bridge,
         std::optional<std::string> window_url
@@ -86,10 +89,11 @@ public:
     MapHandler& operator=(const MapHandler&) = delete;
     ~MapHandler() = default;
 
-    // A click in the map window: cursor -> tile, then walk (left button) or
-    // the right click hook (right button, answered by modules).
+    // A click in the map window: cursor -> tile, then the modules answer it
+    // (walk on the left button, reachability on the right one).
     Result handle_click(const map::Click& click);
-    void set_right_click_hook(RightClickHook hook) { right_click_hook_ = std::move(hook); }
+    void set_click_hook(ClickHook hook) { click_hook_ = std::move(hook); }
+    void set_walk_end_hook(WalkEndHook hook) { walk_end_hook_ = std::move(hook); }
     // Can you get to the tile from where you stand: BFS over the 4
     // neighbours of each tile; your avatar's collision box has to fit in
     // every tile on the way. "Цель доступна", "Цель недоступна" or "Нет
@@ -103,8 +107,6 @@ public:
     Result stop();
 
     [[nodiscard]] bool walking() const { return walk_.has_value(); }
-    [[nodiscard]] bool click_walk() const { return click_walk_; }
-    void set_click_walk(bool on);
     // http://127.0.0.1:<port>/ when the window's server runs.
     [[nodiscard]] const std::optional<std::string>& window_url() const { return window_url_; }
 
@@ -123,7 +125,7 @@ private:
     };
 
     [[nodiscard]] Result plan_walk(map::TilePos tile);
-    [[nodiscard]] Result right_click(map::TilePos tile);
+    [[nodiscard]] Result module_click(map::MouseButton button, map::TilePos tile);
     [[nodiscard]] const map::Grid& grid();
     void mark_tiles_changed();
     void end_walk(const std::string& message, bool tell_game);
@@ -136,14 +138,13 @@ private:
     void send_to_client(const packet::Payload& payload) const;
 
     void on_state(const event::Event& event);
-    void on_tile_change_request(const event::Event& event);
     void on_set_pos(const event::Event& event);
     void on_world_change();
 
     event::Dispatcher& dispatcher_;
     network::Server& server_;
     network::Client& client_;
-    FeatureHandler& features_;
+    SessionHandler& session_;
     map::Bridge& bridge_;
     std::optional<std::string> window_url_;
     std::vector<event::ScopedHandle> handles_;
@@ -161,8 +162,8 @@ private:
     std::optional<map::TilePos> last_target_;
     // The game's last state packet: the model for the ones sent while walking.
     std::optional<packet::GameUpdatePacket> model_;
-    bool click_walk_{ false };
-    RightClickHook right_click_hook_;
+    ClickHook click_hook_;
+    WalkEndHook walk_end_hook_;
     std::string status_;
     std::chrono::steady_clock::time_point next_publish_{};
 };

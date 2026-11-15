@@ -13,6 +13,7 @@ struct Card {
     std::string kind{ "none" };     // "ok" (green), "bad" (red), "none" (grey)
     std::string status;             // free tag for tools, e.g. "reachable"
     bool marker{ true };
+    bool toast{ false };            // a short note at the bottom instead of a card
     std::optional<TilePos> tile;    // the clicked tile if not given
 };
 }

@@ -35,7 +35,6 @@ struct StateView {
     std::uint64_t tiles_revision{ 0 };
     WalkView walk;
     bool gravity{ false };
-    bool click_walk{ false };
     std::string status;                 // last result, shown in the window
 };
 

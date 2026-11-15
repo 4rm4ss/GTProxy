@@ -94,38 +94,47 @@ Remove the hosts entries to play without the proxy.
 
 Type them in the game chat; the proxy answers them itself (they never reach the
 server). `/proxyhelp` (or All commands in `/proxy`) opens a window with every
-command, including those added by Lua scripts.
+command, including those added by modules and Lua scripts.
 
-| Command | What it does |
-|---------|--------------|
-| `/proxy` | Menu with pages for worlds, items, looks and info |
-| `/warp <world> [door]` | Exit and join a world (or a door in it), like typing the name in the world menu |
-| `/back` | Return to the previous world |
-| `/rejoin` | Exit and enter the current world again |
-| `/nick [name]` | Show another name above you, only on your screen; `/nick` alone resets |
-| `/netid` | Show/hide netIDs next to player names (your screen only) |
-| `/pos` | Your tile position |
-| `/players` | Players you can see in this world |
-| `/world` | World name, size, players, dropped items |
-| `/find <text>` / `/item <id>` | Search items.dat by name / show an item |
-| `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen (rainbow is a Lua script) |
-| `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) |
-| `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) |
-| `/daw` | Drop all locks (World, Diamond, Blue Gem, Black Gem) |
-| `/dd <WL>` | Drop locks worth that many World Locks, big ones first (`/dd 300` = 3 Diamond Locks); `/dd` alone = all locks |
-| `/dw`, `/ddl`, `/db [amount]` | Drop World / Diamond / Blue Gem Locks |
-| `/drop <id or name> [amount]` | Drop one item |
-| `/fastdrop`, `/fasttrash` | Skip the "how many?" window when you drop / trash (fast trash never applies to locks) |
-| `/keep [add\|del] <item>` | Items `/dropall` never drops |
-| `/balance` | Your locks in World Locks |
-| `/map` | Open the map window (see below) |
-| `/goto <x> <y>` | Walk to a tile; `/goto stop` stops |
-| `/reach <x> <y>` | Can you get to that tile from where you stand (module `reachability`, as a right click in the map window) |
-| `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching |
+The core itself only has `/proxy` (the menu), `/proxyhelp` and `/map`; every
+other command comes from a module in `modules/` (the last column). Switch a
+module off and its commands are gone - the text then goes to the server as
+normal chat.
+
+| Command | What it does | Module |
+|---------|--------------|--------|
+| `/proxy` | Menu: where you are, a page per module (Worlds, Items, Looks, Info) | core |
+| `/warp <world> [door]` | Exit and join a world (or a door in it), like typing the name in the world menu | worlds |
+| `/back` | Return to the previous world | worlds |
+| `/rejoin` | Exit and enter the current world again | worlds |
+| `/exit` | Exit the current world | worlds |
+| `/nick [name]` | Show another name above you, only on your screen; `/nick` alone resets | looks |
+| `/netid` | Show/hide netIDs next to player names (your screen only) | looks |
+| `/pos` | Your tile position | info |
+| `/players` | Players you can see in this world | info |
+| `/world` | World name, size, players, dropped items | info |
+| `/find <text>` / `/item <id>` | Search items.dat by name / show an item | info |
+| `/debug player\|world\|tile x y\|objects` | What the proxy knows (players, world, a tile, dropped items) | info |
+| `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen | looks |
+| `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) | drop |
+| `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) | drop |
+| `/daw` | Drop all locks (World, Diamond, Blue Gem, Black Gem) | drop |
+| `/dd <WL>` | Drop locks worth that many World Locks, big ones first (`/dd 300` = 3 Diamond Locks); `/dd` alone = all locks | drop |
+| `/dw`, `/ddl`, `/db [amount]` | Drop World / Diamond / Blue Gem Locks | drop |
+| `/drop <id or name> [amount]` | Drop one item | drop |
+| `/fastdrop`, `/fasttrash` | Skip the "how many?" window when you drop / trash (fast trash never applies to locks) | drop |
+| `/keep [add\|del] <item>` | Items `/dropall` never drops | drop |
+| `/balance` | Your locks in World Locks | drop |
+| `/map` | Open the map window (see below) | core |
+| `/goto <x> <y>` | Walk to a tile; `/goto stop` stops | walk |
+| `/reach <x> <y>` | Can you get to that tile from where you stand (as a right click in the map window) | reachability |
+| `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching | walk |
 
 Drops are the same request and "how many?" answer the game sends when you
 press Drop, one stack at a time, each waiting for the server's reply (with a
-pause of 200 ms by default). Item settings are saved in `gtproxy-settings.txt`.
+pause of 200 ms by default). Your item choices (fast drop, fast trash, the
+pause, the keep list) are saved in `data/drop.json` next to `Proxy.exe`; an
+old `gtproxy-settings.txt` is moved there on the first start.
 
 ### Map window
 
@@ -135,8 +144,8 @@ browser. It is served by the proxy itself at `http://127.0.0.1:17171/`, only
 reachable from your computer, and shows blocks (in the colours of their seeds),
 dangerous tiles, doors, players, dropped items and your path.
 
-- **Left click** a tile: walk there. A click on a block walks to the free tile
-  next to it, on your side.
+- **Left click** a tile: walk there (module `walk`). A click on a block walks
+  to the free tile next to it, on your side.
 - **Right click**: can you get there from where you stand - *Цель доступна*
   (reachable), *Цель недоступна* (closed off; also for a block in the tile
   or a tile outside the map) or *Нет данных* (no world, items.dat or
@@ -182,8 +191,12 @@ tile.
 
 ### Modules and profiles
 
-Features can be added as modules: folders of Lua code in `modules/` next to
-`Proxy.exe`. Copy a module's folder there and restart the proxy. Their
+The proxy is an empty core with the features as modules on top: folders of
+Lua code in `modules/` next to `Proxy.exe` (`drop`, `worlds`, `looks`,
+`info`, `walk`, `reachability`). Without them the proxy only forwards
+packets. Add one by copying its folder there and restarting the proxy;
+switch one off in `config/modules.json` (`"enabled": false`, then
+`cfg reload` in the console). Their
 settings are in `config/` next to `Proxy.exe` (also when the proxy is started
 from another folder); profiles in `config/profiles/` switch groups of
 settings without a restart. In the proxy's console window:

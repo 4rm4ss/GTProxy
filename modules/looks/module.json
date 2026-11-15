@@ -1,0 +1,12 @@
+{
+  "id": "looks",
+  "version": "1.0.0",
+  "api_version": 2,
+  "main": "main.lua",
+  "name": "Looks",
+  "description": "/nick, /netid, /skin, /rainbow (only you see them); the Looks page of /proxy.",
+  "author": "GTProxy",
+  "settings": {
+    "rainbow_ms": 200
+  }
+}

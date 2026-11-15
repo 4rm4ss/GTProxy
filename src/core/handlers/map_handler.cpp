@@ -53,7 +53,7 @@ MapHandler::MapHandler(
     event::Dispatcher& dispatcher,
     network::Server& server,
     network::Client& client,
-    FeatureHandler& features,
+    SessionHandler& session,
     const Config::MapConfig& config,
     map::Bridge& bridge,
     std::optional<std::string> window_url
@@ -61,7 +61,7 @@ MapHandler::MapHandler(
     : dispatcher_{ dispatcher }
     , server_{ server }
     , client_{ client }
-    , features_{ features }
+    , session_{ session }
     , bridge_{ bridge }
     , window_url_{ std::move(window_url) }
     , walk_speed_{ std::clamp(config.walk_speed, MIN_SPEED, MAX_SPEED) }
@@ -75,10 +75,9 @@ MapHandler::MapHandler(
         handles_.emplace_back(dispatcher_, type, dispatcher_.append_listener(type, handler, priority));
     };
 
-    // Before the world and feature handlers: a held-back state packet must
+    // Before the world and session handlers: a held-back state packet must
     // not move you on the proxy's map either.
     listen(packet::PacketId::State, event::Priority::FairlyHigh, [this](const event::Event& e) { on_state(e); });
-    listen(packet::PacketId::TileChangeRequest, event::Priority::FairlyHigh, [this](const event::Event& e) { on_tile_change_request(e); });
 
     // After the world handler has applied the change.
     listen(packet::PacketId::OnSetPos, event::Priority::Lowest, [this](const event::Event& e) { on_set_pos(e); });
@@ -110,47 +109,45 @@ MapHandler::MapHandler(
 
 MapHandler::Result MapHandler::handle_click(const map::Click& click)
 {
-    const glm::ivec2 size{ features_.in_world() ? world::World::instance().get_tile_map().get_size() : glm::ivec2{ 0, 0 } };
+    const glm::ivec2 size{ session_.in_world() ? world::World::instance().get_tile_map().get_size() : glm::ivec2{ 0, 0 } };
     const auto target{ map::resolve_click(click, size) };
 
-    // Right click goes to the modules (modules/reachability answers it),
-    // for any tile - also outside the world or with no world yet.
+    // A right click goes to the modules for any tile - also outside the
+    // world or with no world yet (modules/reachability answers both).
     if (click.button == map::MouseButton::Right && click.view.valid()) {
         if (target) {
-            return right_click(target->tile);
+            return module_click(click.button, target->tile);
         }
         if (target.error() == map::ClickError::NoWorld || target.error() == map::ClickError::OutsideWorld) {
-            return right_click(map::cursor_tile(click.view, click.screen));
+            return module_click(click.button, map::cursor_tile(click.view, click.screen));
         }
     }
 
     if (!target) {
         return Result{ false, "click", std::nullopt, fmt::format("Nothing to do: {}.", map::describe(target.error())) };
     }
-
-    if (target->action == map::ClickAction::Inspect) {
-        return right_click(target->tile);
-    }
-    return walk_to(target->tile);
+    return module_click(click.button, target->tile);
 }
 
-MapHandler::Result MapHandler::right_click(const map::TilePos tile)
+MapHandler::Result MapHandler::module_click(const map::MouseButton button, const map::TilePos tile)
 {
-    const auto answer{ right_click_hook_ ? right_click_hook_(tile) : RightClickAnswer{} };
+    const char* which{ button == map::MouseButton::Right ? "Right" : "Left" };
+    const char* action{ button == map::MouseButton::Right ? "right_click" : "left_click" };
+    const auto answer{ click_hook_ ? click_hook_(button, tile) : ClickAnswer{} };
     if (!answer.handled) {
-        Result result{ false, "right_click", tile, "Right click does nothing: no module handles it (modules/, config/modules.json)." };
+        Result result{ false, action, tile, fmt::format("{} click does nothing: no module handles it (modules/, config/modules.json).", which) };
         result.kind = "none";
         result.marker = false;
         return result;
     }
     if (!answer.card) {
-        Result result{ false, "right_click", tile, "No module answered this right click (see the proxy log)." };
+        Result result{ false, action, tile, fmt::format("No module answered this {} click (see the proxy log).", button == map::MouseButton::Right ? "right" : "left") };
         result.marker = false;
         return result;
     }
 
     const auto& card{ *answer.card };
-    Result result{ card.kind == "ok", "card", card.tile.value_or(tile), card.title };
+    Result result{ card.kind == "ok", card.toast ? "toast" : "card", card.tile.value_or(tile), card.title };
     result.detail = card.text;
     result.reach = card.status;
     result.kind = card.kind;
@@ -166,7 +163,7 @@ MapHandler::ReachReport MapHandler::check_reach(const map::TilePos target)
     // What the check needs: the world's tiles, which blocks collide
     // (items.dat) and where you are.
     const auto& world{ world::World::instance() };
-    if (!features_.in_world() || grid().empty()) {
+    if (!session_.in_world() || grid().empty()) {
         report.missing = "карта мира ещё не получена";
     }
     else if (item::ItemDatabase::instance().empty()) {
@@ -234,7 +231,7 @@ MapHandler::Result MapHandler::plan_walk(const map::TilePos tile)
         result.message = "Not connected to the game server.";
         return result;
     }
-    if (!features_.in_world()) {
+    if (!session_.in_world()) {
         result.message = "You are not in a world.";
         return result;
     }
@@ -296,7 +293,7 @@ MapHandler::Result MapHandler::inspect(const map::TilePos tile) const
     Result result{ false, "inspect", tile, {} };
 
     const auto& world{ world::World::instance() };
-    const auto* data{ features_.in_world() ? world.get_tile(tile.x, tile.y) : nullptr };
+    const auto* data{ session_.in_world() ? world.get_tile(tile.x, tile.y) : nullptr };
     if (!data) {
         result.message = fmt::format("No tile {}, {} in this world.", tile.x, tile.y);
         return result;
@@ -346,11 +343,6 @@ MapHandler::Result MapHandler::stop()
     const auto at{ map::player_tile(walk_->walker.position()) };
     end_walk(fmt::format("Stopped at {}, {}.", at.x, at.y), false);
     return Result{ true, "stop", at, status_ };
-}
-
-void MapHandler::set_click_walk(const bool on)
-{
-    click_walk_ = on;
 }
 
 void MapHandler::update()
@@ -408,8 +400,8 @@ void MapHandler::end_walk(const std::string& message, const bool tell_game)
     walk_.reset();
     status_ = message;
     spdlog::info("Map: {}", message);
-    if (tell_game) {
-        features_.message(fmt::format("`o[map] {}", message));
+    if (walk_end_hook_) {
+        walk_end_hook_(message, tell_game);
     }
 }
 
@@ -470,9 +462,6 @@ void MapHandler::serve_window()
         const Result result{
             request.kind == map::Bridge::Request::Kind::Stop ? stop() : handle_click(request.click)
         };
-        if (result.ok && result.action == "walk") {
-            features_.message(fmt::format("`o[map] {}", result.message));
-        }
         request.reply.set_value(map::result_json(result.ok, result.action, result.tile, result.message, result.reach, result.detail, result.kind, result.marker));
     }
 }
@@ -492,11 +481,10 @@ void MapHandler::publish(const std::chrono::steady_clock::time_point now)
 
     map::StateView view{};
     view.connected = client_.is_connected();
-    view.in_world = features_.in_world();
-    view.world_name = features_.current_world();
+    view.in_world = session_.in_world();
+    view.world_name = session_.current_world();
     view.tiles_revision = tiles_revision_;
     view.gravity = path_options_.gravity;
-    view.click_walk = click_walk_;
     view.status = status_;
     view.walk.target = last_target_;
     if (walk_) {
@@ -545,21 +533,6 @@ void MapHandler::on_state(const event::Event& event)
     }
 
     model_ = pkt->game_packet;
-}
-
-void MapHandler::on_tile_change_request(const event::Event& event)
-{
-    const auto evt{ as<packet::PacketId::TileChangeRequest>(event, event::Direction::ServerBound) };
-    const auto pkt{ evt ? evt->get<packet::game::TileChangeRequest>() : nullptr };
-    if (!pkt || !click_walk_) {
-        return;
-    }
-
-    // Click-walk: a click on a tile in the game walks there instead of
-    // punching or building.
-    evt->cancel();
-    const auto result{ walk_to(map::TilePos{ pkt->int_x, pkt->int_y }) };
-    features_.message(fmt::format("`o[map] {}", result.message));
 }
 
 void MapHandler::on_set_pos(const event::Event& event)

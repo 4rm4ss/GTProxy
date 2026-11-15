@@ -8,10 +8,10 @@
 #include "scheduler.hpp"
 #include "web_server.hpp"
 #include "handlers/connection_handler.hpp"
-#include "handlers/feature_handler.hpp"
 #include "handlers/inventory_handler.hpp"
 #include "handlers/map_handler.hpp"
 #include "handlers/forwarding_handler.hpp"
+#include "handlers/session_handler.hpp"
 #include "handlers/world_handler.hpp"
 #include "../command/command_handler.hpp"
 #include "../map/bridge.hpp"
@@ -56,7 +56,7 @@ private:
     std::unique_ptr<handlers::ConnectionHandler> connection_handler_;
     std::unique_ptr<handlers::ForwardingHandler> forwarding_handler_;
     std::unique_ptr<handlers::WorldHandler> world_handler_;
-    std::unique_ptr<handlers::FeatureHandler> feature_handler_;
+    std::unique_ptr<handlers::SessionHandler> session_handler_;
     std::unique_ptr<handlers::InventoryHandler> inventory_handler_;
     std::unique_ptr<handlers::MapHandler> map_handler_;
     std::unique_ptr<command::CommandHandler> command_handler_;

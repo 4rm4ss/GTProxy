@@ -1,6 +1,11 @@
 {
   "profile": "default",
   "modules": {
-    "reachability": { "enabled": true }
+    "drop": { "enabled": true },
+    "info": { "enabled": true },
+    "looks": { "enabled": true },
+    "reachability": { "enabled": true },
+    "walk": { "enabled": true },
+    "worlds": { "enabled": true }
   }
 }

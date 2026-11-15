@@ -6,13 +6,8 @@
 #include "../packet/packet_helper.hpp"
 #include "../packet/message/input.hpp"
 #include "../packet/message/dialog.hpp"
-#include "commands/debug_command.hpp"
-#include "commands/exit_command.hpp"
-#include "commands/feature_commands.hpp"
+#include "commands/core_commands.hpp"
 #include "commands/help_command.hpp"
-#include "commands/item_commands.hpp"
-#include "commands/map_commands.hpp"
-#include "commands/skin_command.hpp"
 
 namespace command {
 namespace {
@@ -26,8 +21,7 @@ CommandHandler::CommandHandler(
     std::shared_ptr<core::Scheduler> scheduler,
     network::Server& server,
     network::Client& client,
-    core::handlers::FeatureHandler& features,
-    core::handlers::InventoryHandler& inventory,
+    core::handlers::SessionHandler& session,
     core::handlers::MapHandler& map
 )
     : config_{ config }
@@ -35,10 +29,9 @@ CommandHandler::CommandHandler(
     , scheduler_{ std::move(scheduler) }
     , server_{ server }
     , client_{ client }
-    , features_{ features }
-    , inventory_{ inventory }
+    , session_{ session }
     , map_{ map }
-    , menu_{ features, inventory, registry_, [this](const std::string& line) { return run(line); } }
+    , menu_{ session, registry_, [this](const std::string& line) { return run(line); } }
 {
     registry_.set_prefix(config_.get_command_config().prefix);
     register_default_commands();
@@ -64,36 +57,9 @@ CommandHandler::~CommandHandler()
 
 void CommandHandler::register_default_commands()
 {
-    registry_.add(std::make_unique<ProxyMenuCommand>(features_, menu_));
-    registry_.add(std::make_unique<WarpCommand>(features_));
-    registry_.add(std::make_unique<BackCommand>(features_));
-    registry_.add(std::make_unique<RejoinCommand>(features_));
-    registry_.add(std::make_unique<ExitCommand>());
-    registry_.add(std::make_unique<NickCommand>(features_));
-    registry_.add(std::make_unique<NetIdCommand>(features_));
-    registry_.add(std::make_unique<PosCommand>(features_));
-    registry_.add(std::make_unique<MapCommand>(features_, map_));
-    registry_.add(std::make_unique<GotoCommand>(features_, map_));
-    registry_.add(std::make_unique<ClickWalkCommand>(features_, map_));
-    registry_.add(std::make_unique<PlayersCommand>(features_));
-    registry_.add(std::make_unique<WorldInfoCommand>(features_));
-    registry_.add(std::make_unique<FindItemCommand>(features_));
-    registry_.add(std::make_unique<ItemInfoCommand>(features_));
-    registry_.add(std::make_unique<SkinCommand>());
-    registry_.add(std::make_unique<InventoryCommand>(features_, inventory_, menu_));
-    registry_.add(std::make_unique<DropAllCommand>(features_, inventory_, menu_));
-    registry_.add(std::make_unique<DropLocksCommand>(features_, inventory_, "daw", false));
-    registry_.add(std::make_unique<DropLocksCommand>(features_, inventory_, "dd", true));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "dw", "World Lock", core::inventory::WORLD_LOCK));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "ddl", "Diamond Lock", core::inventory::DIAMOND_LOCK));
-    registry_.add(std::make_unique<DropLockCommand>(features_, inventory_, "db", "Blue Gem Lock", core::inventory::BLUE_GEM_LOCK));
-    registry_.add(std::make_unique<DropItemCommand>(features_, inventory_));
-    registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastDrop));
-    registry_.add(std::make_unique<ToggleCommand>(features_, inventory_, ToggleCommand::What::FastTrash));
-    registry_.add(std::make_unique<KeepCommand>(features_, inventory_));
-    registry_.add(std::make_unique<BalanceCommand>(features_, inventory_));
-    registry_.add(std::make_unique<HelpCommand>([this] { menu_.show(Menu::Page::Commands); }));
-    registry_.add(std::make_unique<DebugCommand>());
+    registry_.add(std::make_unique<ProxyMenuCommand>(menu_));
+    registry_.add(std::make_unique<HelpCommand>([this] { menu_.show_commands(); }));
+    registry_.add(std::make_unique<MapCommand>(session_, map_));
 }
 
 void CommandHandler::on_text_packet(const event::Event& e)
@@ -137,6 +103,11 @@ void CommandHandler::on_dialog_return(const event::Event& e)
     }
 
     evt->cancel();
+    // The modules first: a page's settings apply with any of its buttons,
+    // also the frame's own (<< Menu). Then the frame opens its page.
+    if (dialog_handler_) {
+        dialog_handler_(*dialog, Menu::frame_button(dialog->button_clicked));
+    }
     menu_.handle(*dialog);
 }
 }

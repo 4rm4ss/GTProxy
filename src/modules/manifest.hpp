@@ -17,9 +17,11 @@
 //     "settings": { "show_marker": true, ... }                 defaults
 //   }
 namespace modules {
-// Version of the module API this proxy offers (docs/modules.md). A module
-// that asks for another version is not loaded.
-inline constexpr int API_VERSION{ 1 };
+// Versions of the module API this proxy offers (docs/modules.md). Version 2
+// only adds to version 1, so modules written for 1 run unchanged. A module
+// that asks for a version outside this range is not loaded.
+inline constexpr int MIN_API_VERSION{ 1 };
+inline constexpr int API_VERSION{ 2 };
 
 struct Manifest {
     std::string id;

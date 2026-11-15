@@ -48,13 +48,13 @@ Core::Core()
     connection_handler_ = std::make_unique<handlers::ConnectionHandler>(dispatcher_, *client_, *server_, config_);
     forwarding_handler_ = std::make_unique<handlers::ForwardingHandler>(dispatcher_, *client_, *server_);
     world_handler_ = std::make_unique<handlers::WorldHandler>(dispatcher_);
-    feature_handler_ = std::make_unique<handlers::FeatureHandler>(dispatcher_, *server_, *client_);
-    inventory_handler_ = std::make_unique<handlers::InventoryHandler>(dispatcher_, *feature_handler_, "gtproxy-settings.txt");
+    session_handler_ = std::make_unique<handlers::SessionHandler>(dispatcher_, *server_, *client_);
+    inventory_handler_ = std::make_unique<handlers::InventoryHandler>(dispatcher_, *session_handler_);
     map_handler_ = std::make_unique<handlers::MapHandler>(
         dispatcher_,
         *server_,
         *client_,
-        *feature_handler_,
+        *session_handler_,
         config_.get_map_config(),
         map_bridge_,
         map_server_->url()
@@ -65,8 +65,7 @@ Core::Core()
         scheduler_,
         *server_,
         *client_,
-        *feature_handler_,
-        *inventory_handler_,
+        *session_handler_,
         *map_handler_
     );
 
@@ -100,13 +99,15 @@ Core::Core()
         browser::open_window(*url);
     }
 
-    // modules/ and config/ are next to Proxy.exe, whatever folder it is
-    // started from.
+    // modules/, config/ and data/ are next to Proxy.exe, whatever folder it
+    // is started from. The proxy's features are all modules.
     module_system_ = std::make_unique<ModuleSystem>(
         paths::executable_dir(),
+        dispatcher_,
+        *session_handler_,
+        *inventory_handler_,
         *map_handler_,
-        *feature_handler_,
-        command_handler_->registry()
+        *command_handler_
     );
 
     console_ = std::make_unique<ConsoleInput>();
@@ -144,8 +145,8 @@ Core::~Core()
         scheduler_->stop();
     }
 
-    // Modules hold commands in the command registry and the map's right
-    // click hook: they go first.
+    // Modules hold commands in the command registry and hooks in the
+    // handlers: they go first.
     console_.reset();
     module_system_.reset();
 
@@ -156,7 +157,7 @@ Core::~Core()
     script_engine_.reset();
     map_handler_.reset();
     inventory_handler_.reset();
-    feature_handler_.reset();
+    session_handler_.reset();
 
     world_handler_.reset();
     forwarding_handler_.reset();
@@ -185,9 +186,8 @@ void Core::run() const
         server_->process();
         client_->process();
         client_->check_connect_progress();
-        feature_handler_->update();
-        inventory_handler_->update();
         map_handler_->update();
+        module_system_->update();
         for (const auto& line : console_->take_lines()) {
             run_console_line(line);
         }

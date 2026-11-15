@@ -79,7 +79,6 @@ struct StateJson {
     bool has_target{ false };
     PointJson target;
     bool gravity{ false };
-    bool click_walk{ false };
     std::string status;
 };
 
@@ -183,7 +182,6 @@ std::string state_json(const StateView& view, const world::World& world)
     doc.height = size.y;
     doc.walking = view.walk.walking;
     doc.gravity = view.gravity;
-    doc.click_walk = view.click_walk;
     doc.status = view.status;
 
     if (view.in_world) {

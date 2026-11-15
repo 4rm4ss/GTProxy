@@ -811,13 +811,73 @@ void run_feature_checks(Endpoint& client, Endpoint& game_server, const std::uint
 }
 
 namespace {
+bool g_modules{ true };
+
+// Without modules/ the proxy is an empty core: it forwards everything (the
+// features' commands are plain chat for the server) and only keeps track of
+// where you are; /proxy shows the menu frame alone.
+void run_empty_core_checks(Endpoint& client, Endpoint& game_server, const std::uint16_t lock_item_id)
+{
+    std::ignore = lock_item_id;
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    for (const auto& text : { spawn_text(5, "`wE2EPlayer``", true), spawn_text(6, "`2Other``", false) }) {
+        const Bytes spawn{ variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, text }) };
+        send(game_server, spawn);
+        const auto got{ receive(client) };
+        check(got && same_payload(spawn, *got), "no modules: OnSpawn forwarded unchanged");
+    }
+
+    for (const std::string command : { "/nick Tester", "/netid", "/warp start", "/dropall now", "/daw", "/goto 3 6", "/pos", "/find dirt" }) {
+        const Bytes chat{ text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + command) };
+        send(client, chat);
+        const auto got{ receive(game_server) };
+        check(got && same_payload(chat, *got), fmt::format("no modules: {} is not a proxy command (goes to the server)", command));
+    }
+    pump_for(200ms);
+    check(client.inbox.empty(), "no modules: the proxy answers none of them");
+
+    {
+        const Bytes dialog{ drop_dialog(2, 200) };
+        send(game_server, dialog);
+        const auto got{ receive(client) };
+        check(got && same_payload(dialog, *got), "no modules: the server's drop dialog reaches the game unchanged");
+    }
+
+    input(client, "/proxy");
+    {
+        const auto call{ receive_call(client, "OnDialogRequest") };
+        const std::string dialog{ call ? call->first.get<std::string>(1) : "" };
+        check(
+            dialog.find("end_dialog|gtproxy_menu|") != std::string::npos && dialog.find("World: `wE2ETESTWORLD``") != std::string::npos
+                && dialog.find("No modules") != std::string::npos && dialog.find("add_button|map|") != std::string::npos
+                && dialog.find("page_items") == std::string::npos,
+            "no modules: /proxy shows the menu frame (where you are, map, commands) and no module pages"
+        );
+    }
+    send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|dialog_return\ndialog_name|gtproxy_menu\nbuttonClicked|page_items\n"));
+    pump_for(300ms);
+    check(game_server.inbox.empty() && client.inbox.empty(), "no modules: a module page's button is ignored and never sent to the server");
+
+    {
+        const Bytes server_dialog{ text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|dialog_return\ndialog_name|popup\nnetID|6\nbuttonClicked|trade\n") };
+        send(client, server_dialog);
+        const auto got{ receive(game_server) };
+        check(got && same_payload(server_dialog, *got), "no modules: the game's own dialogs still go to the server");
+    }
+
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
 // --- Map window: click -> tile -> walk ---------------------------------------
 constexpr int MAP_PORT{ 17171 };
 constexpr int MAP_W{ 12 };
 
-// Set by run_e2e.py: E2E_NO_MODULES=1 runs the proxy without modules/;
-// E2E_APP_DIR is the folder of the proxy's executable (modules/, config/).
-bool g_modules{ true };
+// Set by run_e2e.py: E2E_NO_MODULES=1 runs the proxy without modules/
+// (g_modules, above); E2E_APP_DIR is the folder of the proxy's executable
+// (modules/, config/).
 std::filesystem::path g_app_dir;
 constexpr int MAP_H{ 8 };
 
@@ -1104,6 +1164,28 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
         }
     }
 
+    if (!g_modules) {
+        // Nothing walks without modules/walk: the click is not answered,
+        // /goto and /clickwalk are chat for the server, punches pass.
+        const auto answer{ click_tile(http, 10, 6, 0) };
+        check(contains(answer, "Left click does nothing: no module handles it"), fmt::format("no modules: a left click is not answered ({})", answer.value_or("-")));
+        pump_for(300ms);
+        WalkLog log{};
+        collect(client, game_server, log);
+        check(log.states.empty() && log.set_pos.empty(), "no modules: nothing walks");
+
+        for (const std::string command : { "/goto 3 6", "/clickwalk" }) {
+            const Bytes chat{ text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + command) };
+            send(client, chat);
+            const auto got{ receive(game_server) };
+            check(got && same_payload(chat, *got), fmt::format("no modules: {} goes to the server", command));
+        }
+        send(client, tile_change(5, 6, 18));
+        const auto got{ receive(game_server) };
+        const auto header{ got ? game_header(*got) : std::nullopt };
+        check(header && header->type == packet::PACKET_TILE_CHANGE_REQUEST && header->int_x == 5, "no modules: punches reach the server");
+    }
+    else {
     // Left click on 10, 6: walk over the rock wall, around the lava.
     {
         WalkLog log{};
@@ -1220,6 +1302,7 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
             });
         }, 3000ms) };
         check(punched, "map: without click-walk punches reach the server");
+    }
     }
 
     // The map follows what the server changes.
@@ -1785,6 +1868,16 @@ int main(const int argc, char** argv)
     //    reach the server; the game's own commands still do.
     for (const std::string command : { "/proxyhelp", "/rainbow" }) {
         game_server.inbox.clear();
+        if (!g_modules && command == "/rainbow") {
+            // An empty core: /rainbow belongs to modules/looks.
+            const Bytes chat{ text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + command) };
+            send(client, chat);
+            const auto got{ receive(game_server) };
+            check(got && same_payload(chat, *got), "no modules: /rainbow is not a proxy command (goes to the server)");
+            client.inbox.clear();
+            game_server.inbox.clear();
+            continue;
+        }
         send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT, "action|input\n|text|" + command));
         const auto reply{ receive(client, 3000ms) };
         pump_for(300ms);
@@ -1828,11 +1921,17 @@ int main(const int argc, char** argv)
         check(got && same_payload(world_packet, *got), "valid world data forwarded unchanged");
     }
 
-    // 8b. Proxy features: nick, netIDs, the /proxy menu, warp and back.
-    run_feature_checks(client, game_server, lock_item_id);
+    if (g_modules) {
+        // 8b. Proxy features (modules): nick, netIDs, the /proxy menu, warp and back.
+        run_feature_checks(client, game_server, lock_item_id);
 
-    // 8c. Item tools: /dd, /dw, /dropall, fast drop.
-    run_item_checks(client, game_server, lock_item_id);
+        // 8c. Item tools (modules/drop): /dd, /dw, /dropall, fast drop.
+        run_item_checks(client, game_server, lock_item_id);
+    }
+    else {
+        // 8b. Without modules: an empty core that only forwards.
+        run_empty_core_checks(client, game_server, lock_item_id);
+    }
 
     // 8d. Map window: cursor -> tile, walking, /goto, /clickwalk.
     run_map_checks(client, game_server);

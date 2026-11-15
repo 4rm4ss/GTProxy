@@ -39,6 +39,7 @@ add_executable(GTProxy_tests
     map/test_reachability.cpp
     modules/test_module_config.cpp
     modules/test_module_host.cpp
+    modules/test_shipped_modules.cpp
     world/test_world_updates.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
     ${CMAKE_SOURCE_DIR}/src/world/tile_extra.cpp
@@ -78,7 +79,8 @@ target_link_libraries(GTProxy_tests PRIVATE
 
 target_compile_definitions(GTProxy_tests PRIVATE
     SPDLOG_FMT_EXTERNAL
-    GTPROXY_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources")
+    GTPROXY_RESOURCES_DIR="${CMAKE_SOURCE_DIR}/resources"
+    GTPROXY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 include(GoogleTest)
 gtest_discover_tests(GTProxy_tests)
