@@ -1,0 +1,14 @@
+{
+  "id": "reachability",
+  "version": "1.0.0",
+  "api_version": 1,
+  "main": "main.lua",
+  "name": "Reachability check",
+  "description": "Right click in the map window, /reach X Y in the game, reach X Y in the proxy console: can you get to that tile from where you stand.",
+  "author": "GTProxy",
+  "settings": {
+    "show_marker": true,
+    "show_steps": true,
+    "log_result": true
+  }
+}

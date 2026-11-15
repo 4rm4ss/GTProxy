@@ -9,7 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "browser.hpp"
-#include "../map/click.hpp"
+#include "paths.hpp"
 #include "../packet/register_packets.hpp"
 #include "../scripting/bindings/command_bindings.hpp"
 #include "../scripting/bindings/event_bindings.hpp"
@@ -100,34 +100,37 @@ Core::Core()
         browser::open_window(*url);
     }
 
+    // modules/ and config/ are next to Proxy.exe, whatever folder it is
+    // started from.
+    module_system_ = std::make_unique<ModuleSystem>(
+        paths::executable_dir(),
+        *map_handler_,
+        *feature_handler_,
+        command_handler_->registry()
+    );
+
     console_ = std::make_unique<ConsoleInput>();
-    spdlog::info("Proxy console: type 'reach <x> <y>' here to check if a tile can be reached ('help' lists commands)");
+    spdlog::info("Proxy console: type 'help' here for its commands (cfg list / cfg exec <profile> / cfg reload ...)");
 }
 
 void Core::run_console_line(const std::string& line) const
 {
-    std::istringstream words{ line };
-    std::vector<std::string> args;
-    for (std::string word; words >> word;) {
-        args.push_back(std::move(word));
+    std::istringstream words_in{ line };
+    std::vector<std::string> words;
+    for (std::string word; words_in >> word;) {
+        words.push_back(std::move(word));
     }
-    if (args.empty()) {
+    if (words.empty() || module_system_->run_console(words)) {
         return;
     }
 
-    if (args[0] == "reach") {
-        const auto tile{ args.size() == 3 ? map::parse_tile(args[1], args[2]) : std::nullopt };
-        if (!tile) {
-            spdlog::warn("Usage: reach <x> <y> (tile, as /pos shows it)");
-            return;
-        }
-        // The check logs your position, the tile and the result itself.
-        const auto result{ map_handler_->check_reach(*tile, "proxy console") };
-        spdlog::info("{} - {}", result.message, result.detail);
-        return;
+    if (words[0] != "help") {
+        spdlog::warn("Unknown console command '{}'", words[0]);
     }
-
-    spdlog::info("Proxy console commands: reach <x> <y> - can you get to that tile from where you stand");
+    spdlog::info("Proxy console commands:");
+    for (const auto& help : module_system_->console_help()) {
+        spdlog::info("  {}", help);
+    }
 }
 
 Core::~Core()
@@ -140,6 +143,11 @@ Core::~Core()
     if (scheduler_) {
         scheduler_->stop();
     }
+
+    // Modules hold commands in the command registry and the map's right
+    // click hook: they go first.
+    console_.reset();
+    module_system_.reset();
 
     script_loader_.reset();
     script_event_bridge_.reset();

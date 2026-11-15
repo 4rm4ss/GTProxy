@@ -74,7 +74,6 @@ void CommandHandler::register_default_commands()
     registry_.add(std::make_unique<PosCommand>(features_));
     registry_.add(std::make_unique<MapCommand>(features_, map_));
     registry_.add(std::make_unique<GotoCommand>(features_, map_));
-    registry_.add(std::make_unique<ReachCommand>(features_, map_));
     registry_.add(std::make_unique<ClickWalkCommand>(features_, map_));
     registry_.add(std::make_unique<PlayersCommand>(features_));
     registry_.add(std::make_unique<WorldInfoCommand>(features_));

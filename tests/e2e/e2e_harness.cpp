@@ -12,6 +12,7 @@
 #include <cstring>
 #include <algorithm>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <functional>
@@ -813,6 +814,11 @@ namespace {
 // --- Map window: click -> tile -> walk ---------------------------------------
 constexpr int MAP_PORT{ 17171 };
 constexpr int MAP_W{ 12 };
+
+// Set by run_e2e.py: E2E_NO_MODULES=1 runs the proxy without modules/;
+// E2E_APP_DIR is the folder of the proxy's executable (modules/, config/).
+bool g_modules{ true };
+std::filesystem::path g_app_dir;
 constexpr int MAP_H{ 8 };
 
 // 12x8 world: dirt floor (bottom row), a rock wall at x = 6 (rows 3-6) and
@@ -1086,11 +1092,16 @@ void run_map_checks(Endpoint& client, Endpoint& game_server)
     // Right click: the reachability check, with what is on the tile.
     {
         const auto info{ click_tile(http, 0, 7, 2) };
-        check(
-            contains(info, "\"action\":\"reach\"") && contains(info, "\"reach\":\"blocked\"")
-                && contains(info, "Dirt (2) on Cave Background (14) - solid"),
-            fmt::format("map: right click on a block: rejected, with the tile's contents ({})", info.value_or("-"))
-        );
+        if (g_modules) {
+            check(
+                contains(info, "\"action\":\"card\"") && contains(info, "\"reach\":\"blocked\"")
+                    && contains(info, "Dirt (2) on Cave Background (14) - solid"),
+                fmt::format("map: right click on a block: rejected, with the tile's contents ({})", info.value_or("-"))
+            );
+        }
+        else {
+            check(contains(info, "no module handles it"), fmt::format("map: without modules a right click says nobody answers it ({})", info.value_or("-")));
+        }
     }
 
     // Left click on 10, 6: walk over the rock wall, around the lava.
@@ -1318,6 +1329,188 @@ std::optional<std::string> game_reply(Endpoint& client, Endpoint& game_server, c
     return log.console.back();
 }
 
+// Has the proxy's console run a command (run_e2e.py types it in).
+void console(const std::string& command)
+{
+    fmt::print("@console {}\n", command);
+    std::fflush(stdout);
+}
+
+std::string read_app_file(const std::string& relative)
+{
+    std::ifstream in{ g_app_dir / relative, std::ios::binary };
+    return { std::istreambuf_iterator<char>{ in }, {} };
+}
+
+void write_app_file(const std::string& relative, const std::string& text)
+{
+    std::ofstream{ g_app_dir / relative, std::ios::binary | std::ios::trunc } << text;
+}
+
+// Right clicks until the answer passes `ok`: a console command takes effect
+// once the proxy has read it.
+std::optional<std::string> right_click_until(
+    httplib::Client& http,
+    const int x,
+    const int y,
+    const std::function<bool(const std::string&)>& ok,
+    const std::chrono::milliseconds timeout = 5000ms
+)
+{
+    const auto deadline{ std::chrono::steady_clock::now() + timeout };
+    std::optional<std::string> last;
+    while (std::chrono::steady_clock::now() < deadline) {
+        last = right_click(http, x, y);
+        if (last && ok(*last)) {
+            return last;
+        }
+        pump_for(100ms);
+    }
+    fmt::print("    last answer for {}, {}: {}\n", x, y, last.value_or("-"));
+    return last;
+}
+
+// Console line of the game that contains `part`, after typing `command`.
+std::optional<std::string> game_reply_with(Endpoint& client, Endpoint& game_server, const std::string& command, const std::string& part)
+{
+    WalkLog log{};
+    input(client, command);
+    if (!follow_walk(client, game_server, log, part, 3000ms)) {
+        return std::nullopt;
+    }
+    return log.console.back();
+}
+
+bool has(const std::string& text, const std::string_view part)
+{
+    return text.find(part) != std::string::npos;
+}
+
+// Profiles, settings files and switching the module off and on, all while
+// the proxy runs (in BOXTEST with the box open, you at 5, 4).
+void run_profile_checks(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    const std::string modules_json{ read_app_file("config/modules.json") };
+    const std::string module_settings{ read_app_file("config/modules/reachability.json") };
+    const auto marker_on = [](const std::string& body) { return has(body, "\"marker\":true"); };
+    const auto marker_off = [](const std::string& body) { return has(body, "\"marker\":false"); };
+    const auto steps_on = [](const std::string& body) { return has(body, "5 шагов"); };
+    const auto steps_off = [](const std::string& body) { return has(body, "Цель доступна") && !has(body, "шагов"); };
+
+    auto answer{ right_click(http, 0, 4) };
+    check(contains(answer, "5 шагов") && contains(answer, "\"marker\":true"), "profiles: default profile - step count and marker");
+
+    console("cfg list");
+    console("cfg exec test");
+    answer = right_click_until(http, 0, 4, marker_off);
+    check(answer && marker_off(*answer) && steps_off(*answer), fmt::format("profiles: cfg exec test applies without a restart - no marker, no step count ({})", answer.value_or("-")));
+    {
+        const auto chat{ game_reply(client, game_server, "/reach 0 4") };
+        check(contains(chat, "target reachable") && !contains(chat, "steps"), fmt::format("profiles: /reach follows the profile ({})", chat.value_or("-")));
+    }
+
+    // Broken JSON, then a value of the wrong type: "test" stays in force.
+    console("cfg exec broken");
+    console("cfg exec wrongtype");
+    pump_for(1000ms);
+    answer = right_click(http, 0, 4);
+    check(answer && marker_off(*answer) && steps_off(*answer), "profiles: after broken JSON and a wrong type the working settings stay");
+
+    // defaults -> config/modules/reachability.json -> profile
+    write_app_file("config/modules/reachability.json", R"({ "show_steps": false })");
+    console("cfg exec default");
+    answer = right_click_until(http, 0, 4, marker_on);
+    check(answer && marker_on(*answer) && steps_off(*answer), "profiles: config/modules/reachability.json overrides the module's default");
+    console("cfg exec steps");
+    answer = right_click_until(http, 0, 4, steps_on);
+    check(answer && steps_on(*answer), "profiles: the profile overrides config/modules/reachability.json");
+    console("cfg exec default");
+    answer = right_click_until(http, 0, 4, steps_off);
+    check(answer && steps_off(*answer), "profiles: back to default - nothing of the previous profile is left");
+
+    // A broken settings file on reload: kept; fixed: applied.
+    write_app_file("config/modules/reachability.json", R"({ "show_steps": tru)");
+    console("cfg reload");
+    pump_for(1000ms);
+    answer = right_click(http, 0, 4);
+    check(answer && steps_off(*answer), "profiles: cfg reload with a broken settings file keeps the working settings");
+    write_app_file("config/modules/reachability.json", module_settings);
+    console("cfg reload");
+    answer = right_click_until(http, 0, 4, steps_on);
+    check(answer && steps_on(*answer), "profiles: the fixed file applies on cfg reload");
+
+    // log_result off (the runner checks that 2, 7 is not in the log).
+    console("cfg exec quiet");
+    answer = right_click_until(http, 0, 0, marker_off);
+    check(answer && marker_off(*answer), "profiles: quiet profile applied");
+    answer = right_click(http, 2, 7);
+    check(contains(answer, "Цель доступна"), "profiles: with log_result off the check still answers");
+    console("cfg exec default");
+    check(right_click_until(http, 0, 0, marker_on).has_value(), "profiles: default again");
+
+    // The second module, installed by copying its folder.
+    console("whereami");
+    {
+        const auto chat{ game_reply_with(client, game_server, "/whereami", "BOXTEST") };
+        check(contains(chat, "BOXTEST: tile 5, 4 (world 12x9)"), fmt::format("modules: /whereami answered by the copied module ({})", chat.value_or("-")));
+    }
+
+    // Switched off in config/modules.json: its handlers stop at once.
+    write_app_file("config/modules.json", R"({ "profile": "default", "modules": { "reachability": { "enabled": false } } })");
+    console("cfg reload");
+    // (The test module "crash" still listens to right clicks, but fails.)
+    answer = right_click_until(http, 0, 4, [](const std::string& body) { return has(body, "\"action\":\"right_click\""); });
+    check(contains(answer, "No module answered this right click") && !contains(answer, "Цель"), fmt::format("modules: switched off - reachability no longer answers right clicks ({})", answer.value_or("-")));
+    {
+        game_server.inbox.clear();
+        input(client, "/reach 0 4");
+        const bool forwarded{ pump_until([&] {
+            for (const auto& data : game_server.inbox) {
+                if (const auto text{ parse_text(data) }; text && has(*text, "/reach 0 4")) {
+                    return true;
+                }
+            }
+            return false;
+        }, 3000ms) };
+        check(forwarded, "modules: switched off - /reach is not a proxy command any more (goes to the server)");
+        WalkLog log{};
+        pump_for(300ms);
+        collect(client, game_server, log);
+        check(!log.said("[map]"), "modules: switched off - no answer from the module");
+    }
+    console("reach 0 4");
+
+    write_app_file("config/modules.json", modules_json);
+    console("cfg reload");
+    answer = right_click_until(http, 0, 4, steps_on);
+    check(answer && steps_on(*answer), "modules: switched on again without a restart");
+    {
+        const auto chat{ game_reply(client, game_server, "/reach 0 4") };
+        check(contains(chat, "target reachable"), "modules: /reach works again");
+    }
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
+// Without modules/: right clicks are not answered, /reach goes to the server.
+void run_without_modules(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    const auto answer{ right_click(http, 2, 2) };
+    check(contains(answer, "no module handles it"), fmt::format("no modules: right click is not answered ({})", answer.value_or("-")));
+
+    game_server.inbox.clear();
+    input(client, "/reach 0 4");
+    const bool forwarded{ pump_until([&] {
+        for (const auto& data : game_server.inbox) {
+            if (const auto text{ parse_text(data) }; text && has(*text, "/reach 0 4")) {
+                return true;
+            }
+        }
+        return false;
+    }, 3000ms) };
+    check(forwarded, "no modules: /reach is not a proxy command (goes to the server)");
+}
+
 void run_reach_checks(Endpoint& client, Endpoint& game_server)
 {
     httplib::Client http{ "127.0.0.1", MAP_PORT };
@@ -1333,6 +1526,12 @@ void run_reach_checks(Endpoint& client, Endpoint& game_server)
     // Joining a new world: no map yet.
     send(client, text_packet(packet::NET_MESSAGE_GAME_MESSAGE, "action|join_request\nname|BOXTEST\ninvitedWorld|0\n"));
     check(receive(game_server).has_value(), "reach: join request forwarded");
+    if (!g_modules) {
+        run_without_modules(client, game_server, http);
+        client.inbox.clear();
+        game_server.inbox.clear();
+        return;
+    }
     {
         const auto answer{ right_click(http, 2, 2) };
         check(reach_is(answer, "no_data", "Нет данных") && contains(answer, "карта мира ещё не получена"), fmt::format("reach: before the world arrives: Нет данных ({})", answer.value_or("-")));
@@ -1416,6 +1615,8 @@ void run_reach_checks(Endpoint& client, Endpoint& game_server)
     collect(client, game_server, log);
     check(log.states.empty() && log.other_to_server.empty() && log.set_pos.empty(), "reach: checks never move you or send anything");
 
+    run_profile_checks(client, game_server, http);
+
     // E2E_MAP_HOLD_SECONDS=N keeps you in BOXTEST for N seconds, e.g. to try
     // the map window in a browser while the fake server answers.
     if (const char* hold{ std::getenv("E2E_MAP_HOLD_SECONDS") }) {
@@ -1437,6 +1638,12 @@ int main(const int argc, char** argv)
     }
 
     const std::string items_dat_path{ argv[1] };
+    if (const char* off{ std::getenv("E2E_NO_MODULES") }; off && std::string_view{ off } == "1") {
+        g_modules = false;
+    }
+    if (const char* app_dir{ std::getenv("E2E_APP_DIR") }) {
+        g_app_dir = app_dir;
+    }
     const bool hash_mismatch{ argc > 2 && std::string_view{ argv[2] } == "mismatch" };
 
     if (enet_initialize() != 0) {

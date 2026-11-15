@@ -13,6 +13,11 @@ void CommandRegistry::add(std::unique_ptr<ICommand> cmd)
     commands_[std::move(key)] = std::move(cmd);
 }
 
+bool CommandRegistry::remove(const std::string_view name)
+{
+    return commands_.erase(std::string{ name }) > 0;
+}
+
 ICommand* CommandRegistry::get(std::string_view name) const
 {
     if (const auto it = commands_.find(std::string(name)); it != commands_.end()) {

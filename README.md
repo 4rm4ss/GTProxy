@@ -120,7 +120,7 @@ command, including those added by Lua scripts.
 | `/balance` | Your locks in World Locks |
 | `/map` | Open the map window (see below) |
 | `/goto <x> <y>` | Walk to a tile; `/goto stop` stops |
-| `/reach <x> <y>` | Can you get to that tile from where you stand (as a right click in the map window) |
+| `/reach <x> <y>` | Can you get to that tile from where you stand (module `reachability`, as a right click in the map window) |
 | `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching |
 
 Drops are the same request and "how many?" answer the game sends when you
@@ -146,7 +146,8 @@ dangerous tiles, doors, players, dropped items and your path.
   collision box from OnSpawn (`colrect`, 20x30 = one tile) has to fit in every
   tile on the way. Each check is logged with your position, the tile and the
   result. The same check: `/reach <x> <y>` in the game, or `reach <x> <y>`
-  typed into the proxy's console window.
+  typed into the proxy's console window. This is the `reachability` module
+  (see below); the check itself is part of the proxy.
 - **Drag** moves the map, the **wheel** zooms; **C** centres on you, **F**
   follows you, **Esc** stops walking. The header shows the tile under the cursor.
 
@@ -178,6 +179,26 @@ somewhere else (door, respawn, correction) the walk stops at once.
 `gravity: true` only uses paths you could run and jump along (rising at most
 `jump_height` tiles per jump, then falling); the default goes through any free
 tile.
+
+### Modules and profiles
+
+Features can be added as modules: folders of Lua code in `modules/` next to
+`Proxy.exe`. Copy a module's folder there and restart the proxy. Their
+settings are in `config/` next to `Proxy.exe` (also when the proxy is started
+from another folder); profiles in `config/profiles/` switch groups of
+settings without a restart. In the proxy's console window:
+
+| Console | |
+|---------|-|
+| `cfg list` | Profiles, the active one marked |
+| `cfg exec <name>` | Apply `config/profiles/<name>.json` |
+| `cfg reload` | Read `config/` again (broken files are reported, the working settings stay) |
+| `help` | All console commands |
+
+Settings come from the module's defaults, then `config/modules/<id>.json`,
+then the active profile. Writing modules, the module API and every file are
+described in [docs/modules.md](docs/modules.md); `examples/modules/whereami`
+is a small module to start from.
 
 ## License
 

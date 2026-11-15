@@ -86,8 +86,8 @@ button.active { border-color: var(--accent); color: var(--accent); }
 <div id="info"><h3 id="info-title"></h3><div id="info-text"></div></div>
 <div id="help">
   <p><b>Left click</b> a tile: walk there (on a block: next to it).<br>
-  <b>Right click</b>: can you get there from where you stand
-  (Цель доступна / Цель недоступна / Нет данных; 4 directions, no squeezing between corners).<br>
+  <b>Right click</b>: answered by modules - modules/reachability tells if you can get
+  there (Цель доступна / Цель недоступна / Нет данных).<br>
   <b>Drag</b>: move the map, <b>wheel</b>: zoom.<br>
   <b>C</b> center on you, <b>F</b> follow, <b>Esc</b> stop.</p>
   <p><span class="sw" style="background:#ffcf4a"></span>you &nbsp;
@@ -303,11 +303,13 @@ async function post(path, params) {
 async function sendClick(sx, sy, button) {
   try {
     const res = await post("/api/click", { x: sx, y: sy, button, ox: cam.ox, oy: cam.oy, zoom: cam.zoom, w: W, h: H });
-    if (res.action === "reach") {
-      // The reachability check: shown on the tile and in the card.
-      const kind = res.reach === "reachable" ? "ok" : (res.reach === "no_data" ? "none" : "bad");
-      if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, kind, at: performance.now(), hold: 4000 }; dirty = true; }
-      showInfo(res.message, res.detail, kind);
+    if (res.action === "card") {
+      // A module's answer (right click): a card, and a marker if it wants one.
+      if (res.has_tile && res.marker) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, kind: res.kind, at: performance.now(), hold: 4000 }; dirty = true; }
+      else { marker = null; dirty = true; }
+      showInfo(res.message, res.detail, res.kind);
+    } else if (res.action === "right_click") {
+      if (res.message) toast(res.message, res.ok);
     } else {
       if (res.has_tile) { marker = { x: res.tile.x, y: res.tile.y, ok: res.ok, at: performance.now(), hold: 900 }; dirty = true; }
       toast(res.message, res.ok);

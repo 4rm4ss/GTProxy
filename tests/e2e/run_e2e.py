@@ -19,6 +19,17 @@ Needs root (port 443, /etc/hosts in hostname mode) and Linux (127.0.0.2
 loopback plus SO_REUSEPORT so the fake endpoint can share port 443 with the
 proxy).
 
+Modules: the proxy runs from its own folder (a copy of the executable with
+modules/ and config/ next to it), started from another working directory, as
+a user would. Besides the shipped modules that folder gets broken test
+modules (wrong API version, duplicate id, Lua error, a failing handler), the
+example module examples/modules/whereami (installed by copying), and extra
+profiles (broken JSON, wrong type, ...). E2E_NO_MODULES=1 runs without a
+modules/ folder at all.
+
+The harness prints "@console <command>" to have a command typed into the
+proxy's console window; this script passes it on.
+
 Usage: run_e2e.py <build dir> [ip|hostname]
 """
 import http.client
@@ -194,6 +205,104 @@ def parse_text(text):
     return out
 
 
+TEST_MODULES = {
+    # Asks for a module API this proxy does not have.
+    "badapi": ({"id": "badapi", "version": "1.0.0", "api_version": 99, "main": "main.lua"}, "-- never loaded"),
+    # Same id as modules/reachability (taken first: folders load in name order).
+    "zz_reach_copy": ({"id": "reachability", "version": "9.9.9", "api_version": 1, "main": "main.lua"}, "-- never loaded"),
+    # A Lua error while loading.
+    "broken": ({"id": "broken", "version": "1.0.0", "api_version": 1, "main": "main.lua"}, "this is not lua ("),
+    # Loads, but its right click handler fails every time.
+    "crash": ({"id": "crash", "version": "1.0.0", "api_version": 1, "main": "main.lua"},
+              'gtproxy.on("right_click", function(e) error("crash module test error") end)'),
+}
+
+TEST_PROFILES = {
+    "broken.json": '{ "modules": { "reachability": { "show_steps": tru',
+    "wrongtype.json": '{ "modules": { "reachability": { "show_steps": "yes" } } }',
+    "steps.json": '{ "description": "Steps on", "modules": { "reachability": { "show_steps": true } } }',
+    "quiet.json": '{ "description": "No log", "modules": { "reachability": { "log_result": false, "show_marker": false } } }',
+}
+
+
+def prepare_app_dir(app_dir, no_modules):
+    """modules/ and config/ next to the copied executable, as in the zip."""
+    shutil.copytree(os.path.join(ROOT, "config"), os.path.join(app_dir, "config"))
+    for name, text in TEST_PROFILES.items():
+        with open(os.path.join(app_dir, "config", "profiles", name), "w", encoding="utf-8") as f:
+            f.write(text)
+    if no_modules:
+        return
+    modules_dir = os.path.join(app_dir, "modules")
+    shutil.copytree(os.path.join(ROOT, "modules"), modules_dir)
+    # A second module is installed by copying its folder.
+    shutil.copytree(os.path.join(ROOT, "examples", "modules", "whereami"), os.path.join(modules_dir, "whereami"))
+    for folder, (manifest, code) in TEST_MODULES.items():
+        os.makedirs(os.path.join(modules_dir, folder))
+        with open(os.path.join(modules_dir, folder, "module.json"), "w") as f:
+            json.dump(manifest, f)
+        with open(os.path.join(modules_dir, folder, "main.lua"), "w") as f:
+            f.write(code)
+
+
+def run_harness(args, env, proxy):
+    """Runs the harness, echoing its output; '@console ...' lines are typed into the proxy console."""
+    harness = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env, bufsize=1)
+    try:
+        for line in harness.stdout:
+            if line.startswith("@console "):
+                command = line[len("@console "):].rstrip("\n")
+                print(f"    (console) {command}", flush=True)
+                proxy.stdin.write((command + "\n").encode())
+                proxy.stdin.flush()
+                continue
+            print(line, end="", flush=True)
+        return harness.wait(timeout=300)
+    finally:
+        if harness.poll() is None:
+            harness.kill()
+
+
+def check_module_log(log):
+    check("Reach check (proxy console): start tile unknown at unknown position, target 3, 4 -> Нет данных" in log,
+          "console 'reach 3 4' before any world: Нет данных, logged with position and tile")
+    check("reach - Can you get to a tile from where you stand: reach <x> <y> (module reachability)" in log,
+          "console 'help' lists the module's command")
+    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель доступна (5 steps)" in log,
+          "log has the start position, the tile and the result of a right click")
+    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель недоступна" in log,
+          "log has the same tile as unreachable while the box was closed")
+
+    # Loading: good modules load, bad ones are reported and skipped.
+    check(log.count("Module 'reachability' 1.0.0 loaded from modules/reachability") == 2,
+          "reachability loaded at start and again after being switched back on")
+    check("Module 'whereami' 1.0.0 loaded from modules/whereami" in log, "copied example module whereami loaded")
+    check("Module skipped: modules/badapi: needs module API version 99, this proxy has version 1: not loaded" in log,
+          "module asking for another API version: logged, not loaded")
+    check("Module skipped: modules/zz_reach_copy: id 'reachability' is already used by modules/reachability: not loaded" in log,
+          "duplicate module id: logged, not loaded")
+    check("Failed to run modules/broken/main.lua" in log and "Module 'broken' 1.0.0 failed to load" in log,
+          "module with a Lua error: logged with file and line, not loaded")
+    check("[crash] right_click handler failed" in log and "crash module test error" in log,
+          "failing right click handler of another module: logged, reachability still answered")
+    check("[whereami] BOXTEST: tile 5, 4 (world 12x9)" in log, "console 'whereami' answered by the second module")
+
+    # Profiles.
+    check("  * default - Normal play" in log and "    test - Testing" in log, "cfg list shows the profiles, default active")
+    check("Profile 'test' applied (cfg exec)" in log, "cfg exec test applied")
+    check("Config error: config/profiles/broken.json: line 1, column" in log, "broken JSON: file and place in the log")
+    check("cfg exec 'broken' failed: the settings in force are kept (profile 'test')" in log, "broken JSON: working settings kept")
+    check('Config error: config/profiles/wrongtype.json: modules.reachability.show_steps: must be true or false, not text ("yes")' in log,
+          "wrong type: file, setting and reason in the log")
+    check("Config error: config/modules/reachability.json: line 1, column" in log and "cfg reload 'default' failed" in log,
+          "broken module settings file on cfg reload: reported, settings kept")
+    check("Module reachability 1.0.0: on | log_result=true, show_marker=false, show_steps=false" in log,
+          "log shows the settings in force after a profile change")
+    check("target 2, 7" not in log, "log_result=false: that check was not logged")
+    check("Module 'reachability' unloaded: switched off in config/modules.json" in log, "switching the module off unloads it at once")
+    check("Unknown console command 'reach'" in log, "switched off: console 'reach' is gone too")
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
@@ -216,6 +325,11 @@ def main():
             return 2
 
     workdir = tempfile.mkdtemp(prefix="gtproxy-e2e-")
+    app_dir = tempfile.mkdtemp(prefix="gtproxy-e2e-app-")
+    no_modules = os.environ.get("E2E_NO_MODULES") == "1"
+    app_proxy = os.path.join(app_dir, os.path.basename(proxy_bin))
+    shutil.copy2(proxy_bin, app_proxy)
+    prepare_app_dir(app_dir, no_modules)
     shutil.copytree(os.path.join(ROOT, "resources"), os.path.join(workdir, "resources"))
     os.makedirs(os.path.join(workdir, "scripts"))
     shutil.copy(os.path.join(ROOT, "scripts", "rainbow.lua"), os.path.join(workdir, "scripts"))
@@ -242,7 +356,9 @@ def main():
     log_path = os.path.join(workdir, "e2e-stdout.log")
     log_file = open(log_path, "w")
     wrapper = os.environ.get("E2E_PROXY_WRAPPER", "").split()
-    proxy = subprocess.Popen(wrapper + [proxy_bin], cwd=workdir, stdin=subprocess.PIPE, stdout=log_file,
+    # Started from workdir: modules/ and config/ must still be found next to
+    # the executable in app_dir.
+    proxy = subprocess.Popen(wrapper + [app_proxy], cwd=workdir, stdin=subprocess.PIPE, stdout=log_file,
                              stderr=subprocess.STDOUT, env=env)
 
     try:
@@ -304,11 +420,9 @@ def main():
 
         # --- ENet session -----------------------------------------------------
         harness_args = [harness_bin, items_dat] + (["mismatch"] if mode == "hostname" else [])
-        result = subprocess.run(harness_args, capture_output=True, text=True, timeout=300)
-        print(result.stdout, end="")
-        if result.stderr.strip():
-            print(result.stderr)
-        check(result.returncode == 0, "ENet harness scenario")
+        harness_env = dict(os.environ, E2E_APP_DIR=app_dir)
+        returncode = run_harness(harness_args, harness_env, proxy)
+        check(returncode == 0, "ENet harness scenario")
 
         time.sleep(0.5)
         check(proxy.poll() is None, "proxy still running after the whole session")
@@ -335,13 +449,22 @@ def main():
     else:
         check("Hash matches, loading cached items.dat" in log, "proxy matched the logon items.dat hash (new name suffix)")
     check("reconnecting to last server" in log, "proxy log shows last-server reconnect")
-    check("Reach check (proxy console): start tile unknown at unknown position, target 3, 4 -> Нет данных" in log,
-          "console 'reach 3 4' before any world: Нет данных, logged with position and tile")
-    check("Proxy console commands: reach <x> <y>" in log, "console 'help' lists the commands")
-    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель доступна (5 steps)" in log,
-          "log has the start position, the tile and the result of a right click")
-    check("Reach check (map window right click): start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель недоступна" in log,
-          "log has the same tile as unreachable while the box was closed")
+    check("Proxy console commands:" in log and "cfg exec <profile> - apply config/profiles/<profile>.json" in log,
+          "console 'help' lists the commands")
+
+    # modules/ and config/ were found next to the executable, not in the
+    # working directory the proxy was started from.
+    modules_line = next((l for l in log.splitlines() if "] Modules: " in l), "")
+    check(os.path.basename(app_dir) in modules_line and os.path.basename(workdir) not in modules_line,
+          f"modules/ and config/ found next to the executable, started from another folder ({modules_line.split('] ')[-1]})")
+
+    if no_modules:
+        check("No modules/ folder next to the proxy: running without modules" in log, "no modules/: the proxy says so and runs")
+        check("Unknown console command 'reach'" in log, "no modules/: console 'reach' is not a command")
+        check("Module '" not in log, "no modules/: no module loaded")
+    else:
+        check_module_log(log)
+
     check("Exception" not in log and "Segmentation" not in log, "no exceptions in proxy log")
     # Reports from the third-party ENet fork (lib/enet submodule) are listed but
     # not counted: signed shift in the range coder and an unaligned header read,

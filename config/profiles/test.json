@@ -1,0 +1,9 @@
+{
+  "description": "Testing: no marker on the map, no step counts",
+  "modules": {
+    "reachability": {
+      "show_marker": false,
+      "show_steps": false
+    }
+  }
+}

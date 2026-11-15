@@ -24,6 +24,9 @@ public:
         add(make_command(name, description, std::forward<Func>(func)));
     }
 
+    // Returns false if there was no such command.
+    bool remove(std::string_view name);
+
     [[nodiscard]] ICommand* get(std::string_view name) const;
 
     [[nodiscard]] std::vector<std::pair<std::string, std::string>> get_all_commands() const;

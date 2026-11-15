@@ -74,48 +74,6 @@ public:
     }
 };
 
-// /reach <x> <y>: the right click check typed by hand. The game's font has
-// no Cyrillic, so the game gets the result in English; the proxy log has
-// it as in the map window ("Цель доступна" ...).
-class ReachCommand final : public MapFeatureCommand {
-public:
-    using MapFeatureCommand::MapFeatureCommand;
-
-    [[nodiscard]] std::string_view name() const override { return "reach"; }
-    [[nodiscard]] std::string description() const override { return "Can you get to a tile from where you stand: reach <x> <y>"; }
-
-    Result execute(const Context& ctx) override
-    {
-        const auto tile{ ctx.args.size() == 2 ? map::parse_tile(ctx.args[0], ctx.args[1]) : std::nullopt };
-        if (!tile) {
-            reply(fmt::format("`4Usage: ``{0}reach <x> <y> (tile, as {0}pos shows it)", ctx.registry.prefix()));
-            return Result::InvalidArguments;
-        }
-
-        const auto result{ map_.check_reach(*tile, "/reach in the game") };
-        reply(fmt::format("[map] {}, {}: {}", tile->x, tile->y, in_english(result)));
-        return Result::Success;
-    }
-
-private:
-    static std::string in_english(const core::handlers::MapHandler::Result& result)
-    {
-        if (result.reach == "reachable") {
-            return "`2target reachable``";
-        }
-        if (result.reach == "unreachable") {
-            return "`4target unreachable``";
-        }
-        if (result.reach == "blocked") {
-            return "`4target unreachable: a block is there``";
-        }
-        if (result.reach == "out_of_bounds") {
-            return "`4target unreachable: outside the map``";
-        }
-        return "`5no data`` (no world, items.dat or position yet - see the proxy log)";
-    }
-};
-
 class ClickWalkCommand final : public MapFeatureCommand {
 public:
     using MapFeatureCommand::MapFeatureCommand;

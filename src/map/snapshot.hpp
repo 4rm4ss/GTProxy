@@ -49,6 +49,8 @@ struct StateView {
     std::optional<TilePos> tile,
     std::string_view message,
     std::string_view reach = {},
-    std::string_view detail = {}
+    std::string_view detail = {},
+    std::string_view kind = "none",
+    bool marker = true
 );
 }

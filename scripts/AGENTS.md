@@ -5,6 +5,10 @@
 Scripts in `scripts/` are loaded automatically at startup.
 The scripting engine uses sol2 for C++/Lua bindings.
 
+Modules (`modules/` next to `Proxy.exe`, with settings and profiles in
+`config/`) are a separate, smaller API: each module runs in its own Lua state
+with only the `gtproxy` table. See [docs/modules.md](../docs/modules.md).
+
 ## Global APIs
 
 | API             | Purpose                                   |

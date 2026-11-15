@@ -64,6 +64,7 @@ src/
 │   ├── game/       # Game-specific packet handlers
 │   └── message/    # Message packet types
 ├── map/            # Map window: coordinates, cursor -> tile, paths, walking, page
+├── modules/        # Module loader: module.json, config/ profiles, Lua module API
 ├── world/          # World entity and state management
 ├── player/         # Player entity and state management
 ├── command/        # In-proxy command system
@@ -73,6 +74,10 @@ src/
 ├── event/          # Event dispatcher system
 └── utils/          # Utilities (ByteStream, TextParse, hash, random)
 
+modules/            # Modules shipped next to Proxy.exe (Lua, docs/modules.md)
+config/             # Default module settings and profiles, next to Proxy.exe
+examples/modules/   # Example modules (not installed)
+docs/modules.md     # Module API and config documentation
 lib/                # External libs (enet, cpp-httplib) as Git submodules
 tests/              # Google Test unit tests
 scripts/            # Lua scripts for extending proxy

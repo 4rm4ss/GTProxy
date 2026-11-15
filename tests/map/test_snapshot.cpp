@@ -103,10 +103,10 @@ TEST(MapSnapshotTest, StateJsonOutsideAWorldHasNoPlayers)
 TEST(MapSnapshotTest, ResultJsonEscapesText)
 {
     const auto json{ map::result_json(false, "walk", std::nullopt, "Can't \"go\"\nthere") };
-    EXPECT_EQ(json, R"({"ok":false,"action":"walk","has_tile":false,"tile":{"x":0,"y":0},"message":"Can't \"go\"\nthere","reach":"","detail":""})");
+    EXPECT_EQ(json, R"({"ok":false,"action":"walk","has_tile":false,"tile":{"x":0,"y":0},"message":"Can't \"go\"\nthere","reach":"","detail":"","kind":"none","marker":true})");
 
-    const auto reach{ map::result_json(true, "reach", map::TilePos{ 1, 2 }, "Цель доступна", "reachable", "3 шага") };
-    EXPECT_EQ(reach, R"({"ok":true,"action":"reach","has_tile":true,"tile":{"x":1,"y":2},"message":"Цель доступна","reach":"reachable","detail":"3 шага"})");
+    const auto card{ map::result_json(true, "card", map::TilePos{ 1, 2 }, "Цель доступна", "reachable", "3 шага", "ok", false) };
+    EXPECT_EQ(card, R"({"ok":true,"action":"card","has_tile":true,"tile":{"x":1,"y":2},"message":"Цель доступна","reach":"reachable","detail":"3 шага","kind":"ok","marker":false})");
 }
 
 TEST(MapBridgeTest, RequestsReachTheMainLoopAndBack)

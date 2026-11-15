@@ -61,8 +61,8 @@ jobs:
           Copy-Item "$bin\*.exe" $out
           # Debug symbols: crash reports in logs\ then show function names and lines
           Copy-Item "$bin\*.pdb" $out -ErrorAction SilentlyContinue
-          # resources/ (items.dat) and scripts/ are copied next to the exe by the build
-          foreach ($dir in "resources", "scripts") {
+          # resources/ (items.dat), scripts/, modules/ and config/ are copied next to the exe by the build
+          foreach ($dir in "resources", "scripts", "modules", "config") {
             if (Test-Path "$bin\$dir") { Copy-Item -Recurse "$bin\$dir" $out }
           }
           # Never ship certificates/keys: each user's proxy creates its own CA on first start
@@ -72,6 +72,9 @@ jobs:
             Where-Object { $_.FullName -notmatch "\\CMakeFiles\\" } |
             ForEach-Object { Copy-Item $_.FullName $out -Force }
           Copy-Item "${{github.workspace}}\README.md" $out
+          New-Item -ItemType Directory -Force "$out\docs" | Out-Null
+          Copy-Item "${{github.workspace}}\docs\modules.md" "$out\docs"
+          Copy-Item -Recurse "${{github.workspace}}\examples" $out
           Copy-Item "${{github.workspace}}\dist\windows\*" $out
           Get-ChildItem -Recurse $out | Select-Object FullName, Length | Format-Table -AutoSize
 

@@ -15,6 +15,9 @@ public:
     ~LuaEngine() override = default;
 
     bool execute(std::string_view script) override;
+    // Runs code read elsewhere; chunk_name ("@modules/x/main.lua") is what
+    // error messages and tracebacks show.
+    bool execute(std::string_view script, std::string_view chunk_name);
     bool execute_file(const std::filesystem::path& path) override;
     void register_binding(std::unique_ptr<IBindingModule> binding) override;
 

@@ -58,8 +58,10 @@ struct ResultJson {
     bool has_tile{ false };
     PointJson tile;
     std::string message;
-    std::string reach;      // right click: map::code(Reach)
+    std::string reach;      // card: the status tag a module gave
     std::string detail;
+    std::string kind{ "none" };
+    bool marker{ true };
 };
 
 struct StateJson {
@@ -227,7 +229,9 @@ std::string result_json(
     const std::optional<TilePos> tile,
     const std::string_view message,
     const std::string_view reach,
-    const std::string_view detail
+    const std::string_view detail,
+    const std::string_view kind,
+    const bool marker
 )
 {
     ResultJson doc{};
@@ -236,6 +240,8 @@ std::string result_json(
     doc.message = message;
     doc.reach = reach;
     doc.detail = detail;
+    doc.kind = kind;
+    doc.marker = marker;
     if (tile) {
         doc.has_tile = true;
         doc.tile = PointJson{ tile->x, tile->y };

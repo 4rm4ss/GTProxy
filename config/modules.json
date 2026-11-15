@@ -1,0 +1,6 @@
+{
+  "profile": "default",
+  "modules": {
+    "reachability": { "enabled": true }
+  }
+}

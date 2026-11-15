@@ -1,0 +1,11 @@
+{
+  "id": "whereami",
+  "version": "1.0.0",
+  "api_version": 1,
+  "main": "main.lua",
+  "name": "Where am I",
+  "description": "whereami in the proxy console or /whereami in the game: your world and tile.",
+  "settings": {
+    "show_world_size": true
+  }
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -10,6 +11,7 @@
 #include "../config.hpp"
 #include "../../event/event.hpp"
 #include "../../map/bridge.hpp"
+#include "../../map/card.hpp"
 #include "../../map/click.hpp"
 #include "../../map/grid.hpp"
 #include "../../map/movement.hpp"
@@ -38,12 +40,37 @@ class MapHandler {
 public:
     struct Result {
         bool ok{ false };
-        std::string action;             // "walk", "reach", "inspect" or "stop"
+        std::string action;             // "walk", "card", "right_click", "inspect" or "stop"
         std::optional<map::TilePos> tile;
-        std::string message;
-        std::string reach;              // "reach": map::code() of the result
-        std::string detail;             // "reach": start, target, steps, tile
+        std::string message;            // "card": its title
+        std::string reach;              // "card": the status tag a module gave
+        std::string detail;             // "card": its text
+        std::string kind{ "none" };     // "card": ok / bad / none
+        bool marker{ true };            // mark the tile in the window
     };
+
+    // The reachability check's answer with what was used for it.
+    struct ReachReport {
+        map::TilePos target;
+        map::ReachResult result;
+        std::optional<glm::vec2> position;  // your avatar, world pixels
+        map::Body body;
+        std::string missing;                // NoData: what is not known yet
+        std::string tile_text;              // what is on the target tile
+
+        // "Цель недоступна: в клетке блок"
+        [[nodiscard]] std::string message() const;
+        // "start tile 5, 4 at 160, 128 px (body 20x30), target 0, 4 -> Цель доступна (5 steps)"
+        [[nodiscard]] std::string summary() const;
+    };
+
+    // A right click in the map window is answered by the modules: handled
+    // tells whether any module listens, card is what one of them showed.
+    struct RightClickAnswer {
+        bool handled{ false };
+        std::optional<map::Card> card;
+    };
+    using RightClickHook = std::function<RightClickAnswer(map::TilePos tile)>;
 
     MapHandler(
         event::Dispatcher& dispatcher,
@@ -60,14 +87,15 @@ public:
     ~MapHandler() = default;
 
     // A click in the map window: cursor -> tile, then walk (left button) or
-    // the reachability check (right button).
+    // the right click hook (right button, answered by modules).
     Result handle_click(const map::Click& click);
+    void set_right_click_hook(RightClickHook hook) { right_click_hook_ = std::move(hook); }
     // Can you get to the tile from where you stand: BFS over the 4
-    // neighbours of each tile, your avatar's collision box has to fit in
+    // neighbours of each tile; your avatar's collision box has to fit in
     // every tile on the way. "Цель доступна", "Цель недоступна" or "Нет
-    // данных" (no world, items.dat or position yet). Only reports; logs your
-    // position, the tile and the result. 'source' names who asked (log).
-    Result check_reach(map::TilePos target, std::string_view source);
+    // данных" (no world, items.dat or position yet). Only reports and logs
+    // nothing: the reachability module decides what is shown and logged.
+    [[nodiscard]] ReachReport check_reach(map::TilePos target);
     // Walk to a tile (a block: to the free tile next to it).
     Result walk_to(map::TilePos tile);
     // What is on a tile.
@@ -95,6 +123,7 @@ private:
     };
 
     [[nodiscard]] Result plan_walk(map::TilePos tile);
+    [[nodiscard]] Result right_click(map::TilePos tile);
     [[nodiscard]] const map::Grid& grid();
     void mark_tiles_changed();
     void end_walk(const std::string& message, bool tell_game);
@@ -133,6 +162,7 @@ private:
     // The game's last state packet: the model for the ones sent while walking.
     std::optional<packet::GameUpdatePacket> model_;
     bool click_walk_{ false };
+    RightClickHook right_click_hook_;
     std::string status_;
     std::chrono::steady_clock::time_point next_publish_{};
 };

@@ -65,6 +65,26 @@
    Если сервер переставит вас (дверь, возрождение) - ходьба прекращается.
    Настройки - раздел "map" в config.json (порт, скорость, gravity).
 
+Модули и профили (папки modules\ и config\ рядом с Proxy.exe):
+   Модуль - папка с module.json и main.lua внутри modules\. Чтобы поставить
+   модуль, скопируйте его папку в modules\ и перезапустите Proxy.exe; в окне
+   прокси появится строка "Module '...' loaded" (или причина, почему нет).
+   Проверка по правому клику, /reach и reach - это модуль modules\reachability.
+   config\modules.json         - какие модули включены ("enabled": false -
+                                 выключить) и профиль при запуске
+   config\modules\<id>.json    - настройки модуля (для reachability:
+                                 show_marker, show_steps, log_result)
+   config\profiles\<имя>.json  - профиль: меняет отдельные настройки
+   Порядок: настройки модуля по умолчанию -> config\modules\<id>.json ->
+   активный профиль. Команды в окне Proxy.exe (набрать и Enter):
+   cfg list          список профилей
+   cfg exec test     применить config\profiles\test.json
+   cfg reload        перечитать config\ (и включение модулей)
+   help              все команды консоли
+   Перезапуск не нужен. Если JSON испорчен или значение не того типа, в окне
+   будет файл и причина ошибки, а действующие настройки останутся прежними.
+   Подробно (на английском): docs\modules.md.
+
 Игра висит на "Located server, connecting..."?
    Значит, прокси не может связаться с сервером Growtopia. Чаще всего это
    брандмауэр Windows: Пуск -> "Брандмауэр Защитника Windows" ->

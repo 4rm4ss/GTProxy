@@ -52,6 +52,23 @@ bool LuaEngine::execute(const std::string_view script)
     return true;
 }
 
+bool LuaEngine::execute(const std::string_view script, const std::string_view chunk_name)
+{
+    const sol::protected_function_result result{ lua_.safe_script(
+        script,
+        sol::script_pass_on_error,
+        std::string{ chunk_name }
+    ) };
+
+    if (!result.valid()) {
+        const sol::error err = result;
+        spdlog::error("Failed to run {}: {}", chunk_name.starts_with('@') ? chunk_name.substr(1) : chunk_name, err.what());
+        return false;
+    }
+
+    return true;
+}
+
 bool LuaEngine::execute_file(const std::filesystem::path& path)
 {
     if (!std::filesystem::exists(path)) {

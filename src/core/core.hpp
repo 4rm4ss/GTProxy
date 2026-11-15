@@ -3,6 +3,7 @@
 
 #include "config.hpp"
 #include "console_input.hpp"
+#include "module_system.hpp"
 #include "map_server.hpp"
 #include "scheduler.hpp"
 #include "web_server.hpp"
@@ -65,6 +66,7 @@ private:
     std::unique_ptr<scripting::ScriptEventBridge> script_event_bridge_;
     std::unique_ptr<scripting::ScriptLoader> script_loader_;
 
+    std::unique_ptr<ModuleSystem> module_system_;
     std::unique_ptr<ConsoleInput> console_;
 };
 }

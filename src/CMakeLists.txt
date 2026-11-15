@@ -9,6 +9,7 @@ file(GLOB GTPROXY_INCLUDE_FILES
     event/*.hpp
     item/*.hpp
     map/*.hpp
+    modules/*.hpp
     network/*.hpp
     packet/*.hpp
     packet/game/*.hpp
@@ -27,6 +28,7 @@ file(GLOB GTPROXY_SOURCE_FILES
     core/handlers/*.cpp
     item/*.cpp
     map/*.cpp
+    modules/*.cpp
     network/*.cpp
     packet/*.cpp
     scripting/*.cpp
@@ -125,6 +127,20 @@ add_custom_command(
     "${CMAKE_SOURCE_DIR}/resources"
     "$<TARGET_FILE_DIR:${PROJECT_NAME}>/resources"
     COMMENT "Copying ${CMAKE_SOURCE_DIR}/resources to $<TARGET_FILE_DIR:${PROJECT_NAME}>/resources.")
+
+# Modules and their settings live next to the executable (not in the working
+# directory). Modules are replaced by the ones from the source tree; of
+# config/ only missing files are added, so local edits survive a rebuild.
+add_custom_command(
+    TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_SOURCE_DIR}/modules"
+    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/modules"
+    COMMAND ${CMAKE_COMMAND}
+    "-DSRC=${CMAKE_SOURCE_DIR}/config"
+    "-DDST=$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    -P "${CMAKE_SOURCE_DIR}/cmake/copy_missing.cmake"
+    COMMENT "Copying modules/ and config/ next to ${PROJECT_NAME}.")
 
 file(GLOB SCRIPT_FILES "${CMAKE_SOURCE_DIR}/scripts/*.lua")
 file(GLOB_RECURSE SCRIPT_SUBDIR_FILES "${CMAKE_SOURCE_DIR}/scripts/**/*.lua")
