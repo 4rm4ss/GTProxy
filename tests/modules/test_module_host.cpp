@@ -81,6 +81,10 @@ end)
 assert(dofile == nil and loadfile == nil, "no file access")
 assert(gtproxy.api_version == 3)
 assert(gtproxy.module.id == "reach")
+-- Wall clock (modules have no os library).
+assert(math.type(gtproxy.time()) == "integer" and gtproxy.time() > 1700000000)
+assert(gtproxy.date():match("^%d%d%d%d%-%d%d%-%d%d %d%d:%d%d:%d%d$"), gtproxy.date())
+assert(gtproxy.date(0):match("^19[67]%d%-"), gtproxy.date(0))
 assert(gtproxy.world.info().me.tile_x == 5)
 )" };
 }

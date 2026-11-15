@@ -1,0 +1,18 @@
+{
+  "id": "world_moderation",
+  "version": "1.0.0",
+  "api_version": 3,
+  "main": "main.lua",
+  "name": "World moderation",
+  "description": "Players of the world in a table: pull, kick or ban one, several or everyone in a zone through the game's own player window (the server decides and confirms), lock access given or taken through the lock's window, entry rules and a blacklist (off by default, with a dry run), and a journal. Map window tab \"Модерация\"; /wm.",
+  "author": "GTProxy",
+  "settings": {
+    "rules_enabled": false,
+    "dry_run": true,
+    "rules": "",
+    "exceptions": "",
+    "window_timeout_ms": 3000,
+    "result_timeout_ms": 4000,
+    "gap_ms": 400
+  }
+}

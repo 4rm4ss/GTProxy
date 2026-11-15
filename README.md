@@ -214,7 +214,9 @@ which writes that file; `config.json` is used without the module.
 
 The proxy is an empty core with the features as modules on top: folders of
 Lua code in `modules/` next to `Proxy.exe` (`drop`, `worlds`, `looks`,
-`camera`, `info`, `walk`, `reachability`). Without them the proxy only forwards
+`camera`, `info`, `walk`, `reachability`, and for a local test world
+`vend_finder`, `item_finder`, `world_scan`, `world_moderation`, `autohost`).
+Without them the proxy only forwards
 packets. Add one by copying its folder there and restarting the proxy;
 switch one off in `config/modules.json` (`"enabled": false`, then
 `cfg reload` in the console). Their
@@ -233,6 +235,26 @@ Settings come from the module's defaults, then `config/modules/<id>.json`,
 then the active profile. Writing modules, the module API and every file are
 described in [docs/modules.md](docs/modules.md); `examples/modules/whereami`
 is a small module to start from.
+
+#### Modules for a local test world
+
+Five modules work in the map window's tabs (the **Modules** button) and only
+do what you could do by hand: open a machine's, a player's or a lock's
+window with the wrench, press its own button, answer the drop window. The
+server checks your rights and confirms; every action ends as confirmed,
+refused (with the server's words), no rights, not available, or unknown (no
+answer - never sent again by itself).
+
+| Module | Start with |
+|--------|-----------|
+| `vend_finder` | `/pvend dirt`: machines selling Dirt, cheapest per item first ("3 for 1 WL" vs "2 WL for 4"); tab Вендинги: way to a free tile next to a machine, stock, a purchase in whole packs checked against the machine again before it is sent |
+| `item_finder` | `/pfind any`: the nearest dropped item you can reach by the way you can move; its way on the map, any tile picked on the map; `/pfind go` walks when a walk on foot can be proven |
+| `world_scan` | `/growscan`: blocks, backgrounds, items on the ground (stacks / pieces) and gems counted apart; `/track on`: who picked up what (only when the server names the player); `/render`: `data/renders/<WORLD>_<date>.png` |
+| `world_moderation` | tab Модерация: pull / kick / ban one, several or a zone; lock access through the lock's window; entry rules and a blacklist (off by default, with a dry run); `/wm` |
+| `autohost` | `/pos1`, `/pos2`, `/host start`, `/win1 100`: 100 WL at 10% commission pays 90 WL with one drop after you confirm; pull / kick / ban in a point's zone |
+
+Their tabs are in Russian; what they write in the game is in English (the
+game's font has no Cyrillic).
 
 ## License
 

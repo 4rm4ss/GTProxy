@@ -407,7 +407,7 @@ constexpr std::string_view PAGE_SCRIPT_PANELS{ R"GTPROXY(<script>
 "use strict";
 // The modules' part of the window: tabs (tables, search, buttons, fields)
 // and what they draw on the map (markers, a route, areas).
-let modulesRev = -1, modules = { panels: [], overlays: [] }, activeTab = "", sortBy = {}, flash = null;
+let modulesRev = -1, modules = { panels: [], overlays: [] }, activeTab = "", sortBy = {}, flash = null, specValues = {};
 async function loadModules(rev) {
   try {
     modules = await (await fetch("/api/modules", { cache: "no-store" })).json();
@@ -505,9 +505,13 @@ function renderPane() {
     pane.append(table);
     if (!rows.length && spec.empty) pane.append(el("div", { class: "note" }, spec.empty));
   }
+  // What you typed stays, unless the module changed the field itself.
   for (const input of pane.querySelectorAll("input[data-field]")) {
-    const f = input.dataset.field;
-    if (f in keep && f !== "search") { if (input.type === "checkbox") input.checked = keep[f]; else input.value = keep[f]; }
+    const f = input.dataset.field, id = key + "/" + f;
+    const given = input.type === "checkbox" ? input.checked : input.value;
+    const changed = id in specValues && specValues[id] !== given;
+    specValues[id] = given;
+    if (f in keep && f !== "search" && !changed) { if (input.type === "checkbox") input.checked = keep[f]; else input.value = keep[f]; }
     if (f === focus) input.focus();
   }
 }

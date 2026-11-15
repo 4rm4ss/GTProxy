@@ -116,6 +116,7 @@ struct Overlay {
         int y{ 0 };
         std::string label;
         std::string color;          // "#rrggbb"
+        bool operator==(const Marker&) const = default;
     };
     struct Area {
         int x1{ 0 };
@@ -124,11 +125,13 @@ struct Overlay {
         int y2{ 0 };
         std::string label;
         std::string color;
+        bool operator==(const Area&) const = default;
     };
     std::vector<Marker> markers;
     std::vector<map::TilePos> route;
     std::string route_color;
     std::vector<Area> areas;
+    bool operator==(const Overlay&) const = default;
 };
 
 struct InventoryItem {

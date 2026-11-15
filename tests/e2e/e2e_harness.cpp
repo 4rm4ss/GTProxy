@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <cctype>
 #include <functional>
 #include <optional>
 #include <random>
@@ -1800,6 +1802,783 @@ void run_reach_checks(Endpoint& client, Endpoint& game_server)
     client.inbox.clear();
     game_server.inbox.clear();
 }
+
+// --- Test stand: the five modules of the local test world --------------------
+// FINDTEST: the box of BOXTEST with things lying around (item_finder,
+// world_scan). SHOPTEST: vending machines, a lock and other players
+// (vend_finder, world_moderation, autohost). The fake server answers like
+// the game's: the vending machine's window, the player's window (wrench),
+// the lock's window and the drop window.
+
+// A dropped object appears (-1), changes (-3) or is collected by a player
+// (the player's netID), as the game sends it.
+Bytes object_change(const std::int32_t change, const std::uint32_t object_id, const int item, const int amount, const int tx, const int ty)
+{
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_ITEM_CHANGE_OBJECT;
+    header.net_id = static_cast<std::uint32_t>(change);
+    header.item_net_id = static_cast<std::int32_t>(object_id);
+    header.float_var = static_cast<float>(amount);
+    header.int_data = item;
+    header.pos_x = static_cast<float>(tx * 32 + 6);
+    header.pos_y = static_cast<float>(ty * 32 + 6);
+    return game_packet(header, {});
+}
+
+struct StandObject {
+    std::uint16_t item{ 0 };
+    int x{ 0 };
+    int y{ 0 };
+    std::uint8_t amount{ 0 };
+};
+
+void write_lock_extra(utils::ByteStream<>& bs, const std::uint32_t owner, const std::vector<std::uint32_t>& access)
+{
+    bs.write<std::uint8_t>(3);                  // TileExtra::Type::Lock
+    bs.write<std::uint8_t>(0);
+    bs.write<std::uint32_t>(owner);
+    bs.write<std::uint32_t>(static_cast<std::uint32_t>(access.size()));
+    for (const auto id : access) {
+        bs.write<std::uint32_t>(id);
+    }
+    for (int j = 0; j < 8; ++j) {
+        bs.write<std::uint8_t>(0);
+    }
+}
+
+// A world: fg(x, y) for blocks, extra(x, y, bs) writes a tile's extra data
+// and returns true when it did.
+Bytes build_stand_world(
+    const std::string& name, const int width, const int height,
+    const std::function<std::uint16_t(int, int)>& fg,
+    const std::function<bool(int, int, utils::ByteStream<>&)>& extra,
+    const std::vector<StandObject>& objects
+)
+{
+    utils::ByteStream<> bs{};
+    bs.write<std::uint16_t>(0x18);
+    bs.write<std::uint32_t>(0);
+    bs.write(name);
+    bs.write<std::int32_t>(width);
+    bs.write<std::int32_t>(height);
+    bs.write<std::uint32_t>(static_cast<std::uint32_t>(width * height));
+    for (int i = 0; i < 5; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            utils::ByteStream<> tail{};
+            const bool has_extra{ extra(x, y, tail) };
+            bs.write<std::uint16_t>(fg(x, y));
+            bs.write<std::uint16_t>(14);
+            bs.write<std::uint16_t>(0);
+            bs.write<std::uint16_t>(has_extra ? 1 : 0);
+            if (has_extra) {
+                const auto data{ tail.take_data() };
+                for (const auto b : data) {
+                    bs.write<std::uint8_t>(static_cast<std::uint8_t>(b));
+                }
+            }
+        }
+    }
+    for (int i = 0; i < 12; ++i) {
+        bs.write<std::uint8_t>(0);
+    }
+    bs.write<std::uint32_t>(static_cast<std::uint32_t>(objects.size()));
+    bs.write<std::uint32_t>(static_cast<std::uint32_t>(objects.size()));
+    std::uint32_t id{ 0 };
+    for (const auto& o : objects) {
+        bs.write<std::uint16_t>(o.item);
+        bs.write<float>(static_cast<float>(o.x * 32 + 6));
+        bs.write<float>(static_cast<float>(o.y * 32 + 6));
+        bs.write<std::uint8_t>(o.amount);
+        bs.write<std::uint8_t>(0);
+        bs.write<std::uint32_t>(++id);
+    }
+    return bs.take_data();
+}
+
+std::string spawn_at(const int net_id, const int user_id, const std::string& name, const int tx, const int ty, const bool local)
+{
+    return fmt::format(
+        "spawn|avatar\nnetID|{}\nuserID|{}\ncolrect|0|0|20|30\nposXY|{}|{}\nname|`w{}``\ncountry|ru\ninvis|0\nmstate|0\nsmstate|0\nonlineID|{}",
+        net_id, user_id, tx * 32, ty * 32, name, local ? "\ntype|local" : ""
+    );
+}
+
+void spawn(Endpoint& client, Endpoint& game_server, const int net_id, const int user_id, const std::string& name, const int tx, const int ty, const bool local = false)
+{
+    send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnSpawn" }, spawn_at(net_id, user_id, name, tx, ty, local) }));
+    std::ignore = receive_call(client, "OnSpawn");
+}
+
+void remove_player(Endpoint& game_server, const int net_id, const int user_id)
+{
+    send(game_server, variant_packet(packet::PacketVariant{
+        std::string{ "OnRemove" }, fmt::format("netID|{}\n", net_id), fmt::format("pId|{}\n", user_id) }));
+}
+
+Bytes dialog_packet(const std::string& markup)
+{
+    return variant_packet(packet::PacketVariant{ std::string{ "OnDialogRequest" }, markup });
+}
+
+Bytes console_packet(const std::string& text)
+{
+    return variant_packet(packet::PacketVariant{ std::string{ "OnConsoleMessage" }, text });
+}
+
+std::string url_encode(const std::string& text)
+{
+    std::string out;
+    for (const unsigned char c : text) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            out += static_cast<char>(c);
+        } else {
+            out += fmt::format("%{:02X}", c);
+        }
+    }
+    return out;
+}
+
+// A button of a module's tab in the map window; the module's answer.
+std::optional<std::string> panel(
+    httplib::Client& http, const std::string& key, const std::string& action,
+    const std::string& row = {}, const std::string& value = {},
+    const std::vector<std::pair<std::string, std::string>>& fields = {}
+)
+{
+    std::string path{ fmt::format("/api/panel?panel={}&action={}&row={}&value={}", url_encode(key), url_encode(action), url_encode(row), url_encode(value)) };
+    for (const auto& [name, text] : fields) {
+        path += fmt::format("&f_{}={}", url_encode(name), url_encode(text));
+    }
+    return map_post(http, path);
+}
+
+std::optional<std::string> modules_until(httplib::Client& http, const std::function<bool(const std::string&)>& ok, const std::chrono::milliseconds timeout = 3000ms)
+{
+    return wait_json(http, "/api/modules", ok, timeout);
+}
+
+// The spec of one tab of /api/modules (a module's own JSON), "" if none.
+std::string tab_of(const std::string& modules, const std::string& key)
+{
+    const auto start{ modules.find(fmt::format("{{\"key\":\"{}\",\"spec\":", key)) };
+    if (start == std::string::npos) {
+        return {};
+    }
+    const auto next{ modules.find("{\"key\":\"", start + 10) };
+    return modules.substr(start, next == std::string::npos ? std::string::npos : next - start);
+}
+
+std::optional<std::string> tab_until(httplib::Client& http, const std::string& key, const std::function<bool(const std::string&)>& ok, const std::chrono::milliseconds timeout = 3000ms)
+{
+    std::string last;
+    const auto got{ modules_until(http, [&](const std::string& body) {
+        last = tab_of(body, key);
+        return !last.empty() && ok(last);
+    }, timeout) };
+    if (!got) {
+        fmt::print("    tab {}: {}\n", key, last.substr(0, 1500));
+        return std::nullopt;
+    }
+    return last;
+}
+
+// The next text packet the server gets that starts with `prefix`.
+std::optional<std::string> server_text(Endpoint& game_server, const std::string& prefix, const std::chrono::milliseconds timeout = 3000ms)
+{
+    std::optional<std::string> found;
+    pump_until([&] {
+        while (!game_server.inbox.empty()) {
+            const Bytes data{ std::move(game_server.inbox.front()) };
+            game_server.inbox.pop_front();
+            if (const auto text{ parse_text(data) }; text && text->starts_with(prefix)) {
+                found = *text;
+                return true;
+            }
+        }
+        return false;
+    }, timeout);
+    return found;
+}
+
+// The next wrench (TILE_CHANGE_REQUEST with the wrench, 32) the server gets.
+bool server_wrench(Endpoint& game_server, const int x, const int y, const std::chrono::milliseconds timeout = 3000ms)
+{
+    return pump_until([&] {
+        while (!game_server.inbox.empty()) {
+            const Bytes data{ std::move(game_server.inbox.front()) };
+            game_server.inbox.pop_front();
+            const auto header{ game_header(data) };
+            if (header && header->type == packet::PACKET_TILE_CHANGE_REQUEST && header->int_x == x && header->int_y == y && header->int_data == 32) {
+                return true;
+            }
+        }
+        return false;
+    }, timeout);
+}
+
+// Nothing of `kind` reached the game (a module kept the server's window).
+bool client_got_call(Endpoint& client, const std::string& function, const std::chrono::milliseconds wait = 300ms)
+{
+    bool got{ false };
+    pump_until([&] {
+        while (!client.inbox.empty()) {
+            const Bytes data{ std::move(client.inbox.front()) };
+            client.inbox.pop_front();
+            if (const auto variant{ parse_variant(data) }; variant && variant->get<std::string>(0) == function) {
+                got = true;
+            }
+        }
+        return got;
+    }, wait);
+    return got;
+}
+
+// Console lines the game shows after `command`, until one has `until`.
+std::vector<std::string> game_lines(Endpoint& client, Endpoint& game_server, const std::string& command, const std::string& until)
+{
+    WalkLog log{};
+    input(client, command);
+    follow_walk(client, game_server, log, until, 3000ms);
+    return log.console;
+}
+
+std::string joined(const std::vector<std::string>& lines)
+{
+    std::string text;
+    for (const auto& line : lines) {
+        text += line + "\n";
+    }
+    return text;
+}
+
+bool before(const std::string& text, const std::string& first, const std::string& second)
+{
+    const auto a{ text.find(first) };
+    const auto b{ text.find(second) };
+    return a != std::string::npos && b != std::string::npos && a < b;
+}
+
+void enter_world(Endpoint& client, Endpoint& game_server, httplib::Client& http, const std::string& name, const Bytes& world, const int tx, const int ty)
+{
+    send(client, text_packet(packet::NET_MESSAGE_GAME_MESSAGE, fmt::format("action|join_request\nname|{}\ninvitedWorld|0\n", name)));
+    std::ignore = receive(game_server);
+    send(game_server, map_data_packet(world));
+    std::ignore = receive(client);
+    spawn(client, game_server, 5, 1005, "E2EPlayer", tx, ty, true);
+    check(wait_json(http, "/api/state", [&](const std::string& body) {
+        return body.find(fmt::format("\"world\":\"{}\"", name)) != std::string::npos
+            && body.find(fmt::format("\"tx\":{},\"ty\":{},\"me\":true", tx, ty)) != std::string::npos;
+    }).has_value(), fmt::format("stand: you are at {}, {} in {}", tx, ty, name));
+    pump_for(300ms);
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
+void run_finder_flows(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    // FINDTEST: BOXTEST's closed box (you at 5, 4); Dirt at 0, 4 (left,
+    // 5 steps once the box opens), 8, 4 (right: closer in a straight line,
+    // far by the way around) and 10, 7 (open only between two corners),
+    // Gems inside the box, Rock in the closed room.
+    const std::vector<StandObject> objects{ { 2, 0, 4, 3 }, { 2, 8, 4, 7 }, { 2, 10, 7, 1 }, { 112, 4, 5, 5 }, { 10, 10, 3, 2 } };
+    enter_world(client, game_server, http, "FINDTEST",
+        build_stand_world("FINDTEST", BOX_W, BOX_H, box_fg, [](int, int, utils::ByteStream<>&) { return false; }, objects), 5, 4);
+
+    const std::string items{ "item_finder/items" };
+    {
+        const auto chat{ game_reply_with(client, game_server, "/pfind 2", "can be reached") };
+        check(contains(chat, "3 matching item(s) lie here, but none can be reached"), fmt::format("item_finder: closed box - Dirt outside, none reachable ({})", chat.value_or("-")));
+        const auto gems{ game_reply_with(client, game_server, "/pfind gems", "Nearest") };
+        check(contains(gems, "Gems x5") && contains(gems, "4, 5") && contains(gems, "2 steps"), fmt::format("item_finder: by name - the Gems inside the box, 2 steps ({})", gems.value_or("-")));
+    }
+    {
+        const auto chat{ joined(game_lines(client, game_server, "/growscan", "full table")) };
+        check(has(chat, "`w40`` blocks, `w108`` backgrounds, on the ground `w4`` stacks / `w13`` pieces, gems `w5``"),
+            fmt::format("world_scan: blocks, backgrounds, stacks / pieces and gems apart ({})", chat));
+        check(tab_until(http, "world_scan/scan", [](const std::string& tab) {
+            return has(tab, "гемы на земле: 5 (кучек 1)") && has(tab, "Rock (10)") && has(tab, "[\"Dirt (2)\",12,0,3,11]");
+        }).has_value(), "world_scan: the table - Dirt: 12 blocks, 3 stacks / 11 pieces on the ground");
+        const auto select{ panel(http, "world_scan/scan", "select", "2") };
+        check(contains(select, "мест на карте 15"), fmt::format("world_scan: a row marks every place of the item ({})", select.value_or("-")));
+        const auto track{ game_reply_with(client, game_server, "/track on", "journal") };
+        check(contains(track, "Item journal `2on``"), fmt::format("world_scan: /track on ({})", track.value_or("-")));
+    }
+
+    // The block left of you is broken: the box opens on the left.
+    send(game_server, tile_change(3, 4, 18));
+    check(wait_json(http, "/api/tiles", [](const std::string& body) {
+        const auto fg{ json_numbers(body, "fg") };
+        return fg.size() == BOX_W * BOX_H && fg[4 * BOX_W + 3] == 0;
+    }).has_value(), "stand: the box opens on the left");
+    {
+        const auto chat{ game_reply_with(client, game_server, "/pfind 2", "Nearest") };
+        check(contains(chat, "Dirt x3`` at `w0, 4``, 5 steps (3 matching)"),
+            fmt::format("item_finder: box opened left - the Dirt at 0, 4 (5 steps), not the one closer in a line behind the right wall ({})", chat.value_or("-")));
+        const auto tab{ tab_until(http, items, [](const std::string& tab) {
+            return has(tab, "Цель: Dirt x3 (ID 2) в 0, 4 — путь 5 шаг.") && has(tab, "[\"Dirt (2)\",1,\"10, 7\",\"нет пути\"]");
+        }) };
+        check(tab.has_value(), "item_finder: the tab - the target with its way, and the pocket open only diagonally has no way");
+        const auto overlay{ modules_until(http, [](const std::string& body) {
+            return has(body, "\"key\":\"item_finder/items\"") && has(body, "\"route\":[[5,4],[4,4],[3,4],[2,4],[1,4],[0,4]]");
+        }) };
+        check(overlay.has_value(), "item_finder: the way is drawn on the map, through the opening");
+        check(tab_until(http, "world_scan/scan", [](const std::string& tab) { return has(tab, "Блоков: 39"); }).has_value(),
+            "world_scan: the broken block is counted at once");
+    }
+
+    // Someone else picks the target up: the next nearest is chosen.
+    spawn(client, game_server, 30, 1030, "Picker", 0, 4);
+    send(game_server, object_change(30, 1, 2, 0, 0, 4));
+    {
+        const auto tab{ tab_until(http, items, [](const std::string& tab) {
+            return has(tab, "поднял игрок Picker") && has(tab, "Цель: Dirt x7 (ID 2) в 8, 4");
+        }) };
+        check(tab.has_value(), "item_finder: the target vanished while searching - picked up by Picker, the next nearest (8, 4) chosen");
+        check(tab_until(http, "world_scan/journal", [](const std::string& tab) { return has(tab, "Поднял игрок Picker: Dirt x3"); }).has_value(),
+            "world_scan: /track names the player only when the server did");
+    }
+    send(game_server, object_change(77, 5, 0, 0, 10, 3));
+    send(game_server, object_change(-1, 0, 112, 3, 6, 3));
+    check(tab_until(http, "world_scan/journal", [](const std::string& tab) {
+        return has(tab, "Объект исчез: Rock x2") && has(tab, "Появился на земле: Gems x3") && has(tab, "\"6, 3\"");
+    }).has_value(), "world_scan: a stack gone with nobody known - Объект исчез; a new drop where it fell");
+    check(tab_until(http, "world_scan/scan", [](const std::string& tab) { return has(tab, "гемы на земле: 8 (кучек 2)"); }).has_value(),
+        "world_scan: the new gems are counted");
+
+    // Any tile picked on the map.
+    {
+        check(contains(panel(http, items, "pick"), "Щёлкните клетку"), "item_finder: pick a tile on the map");
+        const auto room{ click_tile(http, 10, 3, 0) };
+        check(contains(room, "10, 3: пути нет"), fmt::format("item_finder: a tile in the closed room - no way ({})", room.value_or("-")));
+        const auto go{ panel(http, items, "go") };
+        check(contains(go, "До цели нет пути"), fmt::format("item_finder: no walking without a way ({})", go.value_or("-")));
+        std::ignore = panel(http, items, "pick");
+        const auto inside{ click_tile(http, 6, 5, 0) };
+        check(contains(inside, "6, 5: путь 2 шаг."), fmt::format("item_finder: a tile in the box - its way ({})", inside.value_or("-")));
+        const auto walk{ panel(http, items, "go") };
+        check(contains(walk, "Идём к 6, 5") || contains(walk, "Ходьба недоступна"),
+            fmt::format("item_finder: Идти к цели walks, or says why it cannot ({})", walk.value_or("-")));
+        fmt::print("    item_finder go: {}\n", walk.value_or("-"));
+        check(contains(panel(http, items, "stop"), "Стоп"), "item_finder: Стоп");
+        pump_for(300ms);
+        client.inbox.clear();
+        game_server.inbox.clear();
+    }
+
+    // /render: a PNG named after the world and the date.
+    {
+        const auto saved{ game_reply_with(client, game_server, "/render", "Saved") };
+        check(contains(saved, "FINDTEST_") && contains(saved, ".png"), fmt::format("world_scan: /render saves <WORLD>_<date>.png ({})", saved.value_or("-")));
+        bool found{ false };
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator{ g_app_dir / "data" / "renders", ec }) {
+            const auto name{ entry.path().filename().string() };
+            found = found || (name.starts_with("FINDTEST_") && name.ends_with(".png") && entry.file_size() > 200);
+        }
+        check(found, "world_scan: the PNG is in data/renders");
+    }
+}
+
+std::uint16_t shop_fg(const int x, const int y)
+{
+    if (y == 9) {
+        return 10;
+    }
+    if (y == 8 && (x == 2 || x == 6 || x == 10 || x == 12 || x == 14)) {
+        return 2978;
+    }
+    if (x == 0 && y == 0) {
+        return 242;
+    }
+    return 0;
+}
+
+Bytes build_shop_world()
+{
+    return build_stand_world("SHOPTEST", 16, 10, shop_fg, [](const int x, const int y, utils::ByteStream<>& bs) {
+        if (x == 0 && y == 0) {
+            write_lock_extra(bs, 1005, { 2002 });
+            return true;
+        }
+        if (y != 8 || shop_fg(x, y) != 2978) {
+            return false;
+        }
+        const std::map<int, std::pair<std::uint32_t, std::int32_t>> machines{
+            { 2, { 2, -3 } }, { 6, { 2, -2 } }, { 10, { 2, 1 } }, { 12, { 0, 0 } }, { 14, { 2, 0 } },
+        };
+        const auto [item, price]{ machines.at(x) };
+        bs.write<std::uint8_t>(24);             // TileExtra::Type::Vending
+        bs.write<std::uint32_t>(item);
+        bs.write<std::uint32_t>(static_cast<std::uint32_t>(price));
+        return true;
+    }, {});
+}
+
+std::string vending_window(const int x, const int y, const int item, const int price, const std::vector<std::string>& lines)
+{
+    std::string texts;
+    for (const auto& line : lines) {
+        texts += fmt::format("add_textbox|{}|left|\n", line);
+    }
+    return fmt::format(
+        "set_default_color|`o\nadd_label_with_icon|big|`wVending Machine``|left|2978|\n{}"
+        "add_text_input|buycount|Buy how many?|0|5|\nembed_data|tilex|{}\nembed_data|tiley|{}\nembed_data|expectprice|{}\n"
+        "embed_data|expectitem|{}\nend_dialog|vending|Cancel|Buy|\n", texts, x, y, price, item);
+}
+
+void run_vending_flows(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    const std::string vend{ "vend_finder/vend" };
+    {
+        const auto lines{ joined(game_lines(client, game_server, "/pvend dirt", "14, 8")) };
+        check(has(lines, "4 machine(s) with `wdirt``"), fmt::format("vend_finder: /pvend dirt - four machines sell Dirt ({})", lines));
+        check(before(lines, "Dirt at `w2, 8``: 3 for 1 WL (0.3333 WL each)", "Dirt at `w6, 8``: 2 for 1 WL (0.5 WL each)")
+            && before(lines, "6, 8``", "Dirt at `w10, 8``: 1 WL each (1 WL each)") && before(lines, "10, 8``", "Dirt at `w14, 8``: price unknown"),
+            "vend_finder: cheapest per item first, two price forms compared per item, unknown price last");
+        check(has(lines, "stock unknown"), "vend_finder: stock unknown until the machine's window is seen");
+    }
+    {
+        const auto tab{ tab_until(http, vend, [](const std::string& tab) {
+            return has(tab, "Цена неизвестна") && has(tab, "Остаток неизвестен") && before(tab, "\"id\":\"2,8\"", "\"id\":\"6,8\"")
+                && before(tab, "\"id\":\"6,8\"", "\"id\":\"10,8\"") && before(tab, "\"id\":\"10,8\"", "\"id\":\"14,8\"");
+        }) };
+        check(tab.has_value(), "vend_finder: the tab - same order, Цена неизвестна / Остаток неизвестен");
+        std::ignore = panel(http, vend, "search", {}, "");
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "[\"пусто\",\"—\",\"—\",\"0\",\"12, 8\""); }).has_value(),
+            "vend_finder: an empty machine is listed as empty with stock 0");
+        std::ignore = panel(http, vend, "select", "14,8");
+        const auto unknown{ panel(http, vend, "buy", {}, {}, { { "qty", "1" } }) };
+        check(contains(unknown, "Цена неизвестна") && contains(unknown, "\"ok\":false"), fmt::format("vend_finder: no purchase at an unknown price ({})", unknown.value_or("-")));
+    }
+    {
+        const auto select{ panel(http, vend, "select", "2,8") };
+        check(contains(select, "2, 8: путь 1 шаг. до 3, 8"), fmt::format("vend_finder: a row - the way to a free tile next to the machine ({})", select.value_or("-")));
+        check(modules_until(http, [](const std::string& body) { return has(body, "\"route\":[[4,8],[3,8]]") && has(body, "встать здесь"); }).has_value(),
+            "vend_finder: the machine and the way are on the map");
+        const auto buy{ panel(http, vend, "buy", {}, {}, { { "qty", "10" } }) };
+        check(contains(buy, "12 шт. за 4 WL — подтвердите"), fmt::format("vend_finder: 10 at 3 per WL - whole packs: 12 for 4 WL, shown before confirming ({})", buy.value_or("-")));
+        check(tab_until(http, vend, [](const std::string& tab) {
+            return has(tab, "Ожидает подтверждения") && has(tab, "округлено вверх до целых пачек") && has(tab, "Подтвердить покупку");
+        }).has_value(), "vend_finder: Ожидает подтверждения, and the rounding is said");
+        game_server.inbox.clear();
+        const auto confirm{ panel(http, vend, "confirm") };
+        const auto twice{ panel(http, vend, "confirm") };
+        check(contains(confirm, "Проверяем автомат"), fmt::format("vend_finder: confirm asks the machine again first ({})", confirm.value_or("-")));
+        check(contains(twice, "Покупка уже выполняется"), fmt::format("vend_finder: a second click while it runs is refused ({})", twice.value_or("-")));
+        check(server_wrench(game_server, 2, 8), "vend_finder: the machine is asked with the wrench, like by hand");
+        send(game_server, dialog_packet(vending_window(2, 8, 2, -3, std::vector<std::string>{ "The machine contains a total of 115 Dirt.", "3 Dirt per World Lock." })));
+        const auto answer{ server_text(game_server, "action|dialog_return") };
+        check(answer == "action|dialog_return\ndialog_name|vending\ntilex|2|\ntiley|8|\nexpectprice|-3|\nexpectitem|2|\nbuycount|12\n",
+            fmt::format("vend_finder: the same offer - one purchase of 12 sent with the machine's own data ({})", answer.value_or("-")));
+        check(!client_got_call(client, "OnDialogRequest"), "vend_finder: the machine's window of the check does not pop up in the game");
+        pump_for(300ms);
+        check(game_server.inbox.empty(), "vend_finder: sent once, nothing more");
+        send(game_server, inventory_packet({ { 2, 12, 0 }, { 242, 20, 0 } }));
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "Подтверждено") && has(tab, "Получено 12 шт."); }).has_value(),
+            "vend_finder: Подтверждено when the items arrive");
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "[\"Dirt (2)\",\"3 for 1 WL\",\"0.3333\",\"115\""); }).has_value(),
+            "vend_finder: the stock from the machine's window is shown");
+    }
+    {
+        // The price changed after the choice: the new offer waits.
+        std::ignore = panel(http, vend, "select", "6,8");
+        const auto buy{ panel(http, vend, "buy", {}, {}, { { "qty", "4" } }) };
+        check(contains(buy, "4 шт. за 2 WL"), fmt::format("vend_finder: 4 at 2 per WL ({})", buy.value_or("-")));
+        game_server.inbox.clear();
+        std::ignore = panel(http, vend, "confirm");
+        check(server_wrench(game_server, 6, 8), "vend_finder: the machine is asked again before buying");
+        send(game_server, dialog_packet(vending_window(6, 8, 2, -4, std::vector<std::string>{ "The machine contains a total of 40 Dirt.", "4 Dirt per World Lock." })));
+        check(tab_until(http, vend, [](const std::string& tab) {
+            return has(tab, "Предложение изменилось: цена 4 for 1 WL вместо 2 for 1 WL") && has(tab, "Ожидает подтверждения");
+        }).has_value(), "vend_finder: the price changed after the choice - the new offer is shown for a new confirmation");
+        check(!server_text(game_server, "action|dialog_return", 500ms).has_value(), "vend_finder: nothing bought at the changed price");
+        check(contains(panel(http, vend, "cancel"), "Отменено"), "vend_finder: cancel");
+    }
+    {
+        // No answer to the purchase: unknown, never sent again.
+        std::ignore = panel(http, vend, "select", "10,8");
+        std::ignore = panel(http, vend, "buy", {}, {}, { { "qty", "1" } });
+        game_server.inbox.clear();
+        std::ignore = panel(http, vend, "confirm");
+        check(server_wrench(game_server, 10, 8), "vend_finder: 1 WL each - asked");
+        send(game_server, dialog_packet(vending_window(10, 8, 2, 1, std::vector<std::string>{ "The machine contains a total of 5 Dirt.", "1 World Lock each." })));
+        check(contains(server_text(game_server, "action|dialog_return"), "buycount|1\n"), "vend_finder: buying 1");
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "Результат неизвестен"); }, 8000ms).has_value(),
+            "vend_finder: no answer - Результат неизвестен");
+        check(!server_text(game_server, "action|dialog_return", 300ms).has_value(), "vend_finder: and it is not sent again");
+    }
+    {
+        // Leaving the world with a purchase waiting.
+        std::ignore = panel(http, vend, "select", "2,8");
+        std::ignore = panel(http, vend, "buy", {}, {}, { { "qty", "3" } });
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "Ожидает подтверждения"); }).has_value(), "vend_finder: a purchase waits");
+        send(game_server, variant_packet(packet::PacketVariant{ std::string{ "OnRequestWorldSelectMenu" }, std::string{ "default|\n" } }));
+        check(tab_until(http, vend, [](const std::string& tab) { return has(tab, "Вы не в мире."); }).has_value(), "vend_finder: leaving the world closes it");
+        enter_world(client, game_server, http, "SHOPTEST", build_shop_world(), 4, 8);
+        const auto confirm{ panel(http, vend, "confirm") };
+        check(contains(confirm, "Нечего подтверждать"), fmt::format("vend_finder: back in the world nothing is left to confirm ({})", confirm.value_or("-")));
+    }
+}
+
+// The player's window (wrench) as the server sends it.
+std::string player_window(const int net_id, const std::vector<std::string>& buttons)
+{
+    std::string markup{ fmt::format("set_default_color|`o\nadd_label_with_icon|big|`wPlayer``|left|18|\nembed_data|netID|{}\n", net_id) };
+    for (const auto& b : buttons) {
+        markup += fmt::format("add_button|{0}|`w{0}``|noflags|0|0|\n", b);
+    }
+    return markup + "end_dialog|popup||Continue|\n";
+}
+
+std::optional<std::string> wrench_player(Endpoint& game_server, const int net_id, const std::chrono::milliseconds timeout = 3000ms)
+{
+    return server_text(game_server, fmt::format("action|wrench\n|netid|{}\n", net_id), timeout);
+}
+
+Bytes lock_update(const std::vector<std::uint32_t>& access)
+{
+    utils::ByteStream<> tile{};
+    tile.write<std::uint16_t>(242);
+    tile.write<std::uint16_t>(14);
+    tile.write<std::uint16_t>(0);
+    tile.write<std::uint16_t>(1);
+    write_lock_extra(tile, 1005, access);
+    packet::GameUpdatePacket header{};
+    header.type = packet::PACKET_SEND_TILE_UPDATE_DATA;
+    header.int_x = 0;
+    header.int_y = 0;
+    return game_packet(header, tile.take_data());
+}
+
+void run_moderation_flows(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    const std::string mod{ "world_moderation/moderation" };
+    const std::string log_tab{ "world_moderation/moderation_log" };
+    const auto journal_has = [&](const std::string& part, const std::chrono::milliseconds timeout = 3000ms) {
+        return tab_until(http, log_tab, [&](const std::string& tab) { return has(tab, part); }, timeout).has_value();
+    };
+    check(tab_until(http, mod, [](const std::string& tab) { return has(tab, "\"Alice\",2020,20") && has(tab, "\"Bob\",2021,21"); }).has_value(),
+        "world_moderation: the players with their account ID and netID");
+
+    // Kick: the player's window, its Kick button, the player leaves.
+    check(contains(panel(http, mod, "select", "20"), "Выбран Alice"), "world_moderation: choose Alice");
+    check(contains(panel(http, mod, "kick"), "Kick для 1 — подтвердите"), "world_moderation: kick waits for confirmation");
+    game_server.inbox.clear();
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 20).has_value(), "world_moderation: the player's window is asked by netID (the wrench)");
+    send(game_server, dialog_packet(player_window(20, { "pull", "kick", "worldban" })));
+    const auto kick{ server_text(game_server, "action|dialog_return") };
+    check(kick == "action|dialog_return\ndialog_name|popup\nnetID|20|\nbuttonClicked|kick\n", fmt::format("world_moderation: the window's own Kick button is pressed ({})", kick.value_or("-")));
+    check(!client_got_call(client, "OnDialogRequest"), "world_moderation: the window does not pop up in the game");
+    remove_player(game_server, 20, 2020);
+    check(journal_has("\"SHOPTEST\",\"Kick\",\"Alice (#2020)\",\"Подтверждено\",\"игрок покинул мир\""), "world_moderation: Подтверждено once the player left");
+
+    // No rights: no such button in the window.
+    std::ignore = panel(http, mod, "select", "21");
+    std::ignore = panel(http, mod, "ban");
+    game_server.inbox.clear();
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 21).has_value(), "world_moderation: Bob's window asked");
+    send(game_server, dialog_packet(player_window(21, { "pull" })));
+    check(journal_has("\"Ban\",\"Bob (#2021)\",\"Нет прав\",\"в окне игрока нет кнопки Ban\""), "world_moderation: no Ban button - Нет прав");
+    check(!server_text(game_server, "action|dialog_return", 300ms).has_value(), "world_moderation: nothing pressed without rights");
+
+    // The window never comes: the interface is not there.
+    std::ignore = panel(http, mod, "pull");
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 21).has_value(), "world_moderation: asked again for pull");
+    check(journal_has("\"Pull\",\"Bob (#2021)\",\"Недоступно\",\"сервер не открыл окно игрока\"", 6000ms), "world_moderation: no window - Недоступно");
+
+    // The server refuses.
+    std::ignore = panel(http, mod, "kick");
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 21).has_value(), "world_moderation: kick Bob");
+    send(game_server, dialog_packet(player_window(21, { "kick" })));
+    check(contains(server_text(game_server, "action|dialog_return"), "buttonClicked|kick"), "world_moderation: Kick pressed");
+    send(game_server, console_packet("`4You can't kick Bob, they are a moderator."));
+    check(journal_has("\"Kick\",\"Bob (#2021)\",\"Отклонено\",\"сервер: You can't kick Bob, they are a moderator.\""), "world_moderation: the server refused - Отклонено with its words");
+
+    // No answer at all.
+    std::ignore = panel(http, mod, "kick");
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 21).has_value(), "world_moderation: kick Bob again");
+    send(game_server, dialog_packet(player_window(21, { "kick" })));
+    check(server_text(game_server, "action|dialog_return").has_value(), "world_moderation: Kick pressed again");
+    check(journal_has("\"Kick\",\"Bob (#2021)\",\"Результат неизвестен\"", 7000ms), "world_moderation: no answer - Результат неизвестен");
+
+    // Several at once; one leaves before its turn.
+    spawn(client, game_server, 22, 2022, "Carol", 7, 8);
+    spawn(client, game_server, 23, 2023, "Dave", 7, 7);
+    std::ignore = panel(http, mod, "none");
+    std::ignore = panel(http, mod, "select", "22");
+    std::ignore = panel(http, mod, "select", "23");
+    check(contains(panel(http, mod, "kick"), "Kick для 2"), "world_moderation: two chosen");
+    game_server.inbox.clear();
+    std::ignore = panel(http, mod, "confirm");
+    check(wrench_player(game_server, 22).has_value(), "world_moderation: one after another - Carol first");
+    remove_player(game_server, 23, 2023);
+    send(game_server, dialog_packet(player_window(22, { "kick" })));
+    check(server_text(game_server, "action|dialog_return").has_value(), "world_moderation: Carol kicked");
+    remove_player(game_server, 22, 2022);
+    check(journal_has("\"Carol (#2022)\",\"Подтверждено\"") && journal_has("\"Dave (#2023)\",\"Пропущено\",\"игрок ушёл из мира\""),
+        "world_moderation: each with its own result - Dave left before his turn: Пропущено");
+    check(!wrench_player(game_server, 23, 300ms).has_value(), "world_moderation: nothing sent for a player who left");
+
+    // Lock access, through the lock's own window.
+    check(contains(panel(http, mod, "lock"), "Щёлкните замок"), "world_moderation: pick a lock");
+    const auto picked{ click_tile(http, 0, 0, 0) };
+    check(contains(picked, "Замок 0, 0 выбран"), fmt::format("world_moderation: the lock picked on the map ({})", picked.value_or("-")));
+    check(tab_until(http, mod, [](const std::string& tab) {
+        return has(tab, "Замок 0, 0: World Lock (242), владелец E2EPlayer (#1005). Доступ: #2002. Сейчас здесь с доступом: никого.");
+    }).has_value(), "world_moderation: where, what kind, owner and who has access");
+    std::ignore = panel(http, mod, "none");
+    std::ignore = panel(http, mod, "select", "21");
+    std::ignore = panel(http, mod, "give");
+    game_server.inbox.clear();
+    std::ignore = panel(http, mod, "confirm");
+    check(server_wrench(game_server, 0, 0), "world_moderation: the lock's window asked (wrench on the lock)");
+    const std::string lock_window{
+        "add_label_with_icon|big|`wEdit World Lock``|left|242|\nadd_checkbox|checkbox_2002|Zed|1\nadd_player_picker|playerNetID|`wAdd``|\n"
+        "embed_data|tilex|0\nembed_data|tiley|0\nend_dialog|lock_edit|Cancel|OK|\n"
+    };
+    send(game_server, dialog_packet(lock_window));
+    const auto give{ server_text(game_server, "action|dialog_return") };
+    check(contains(give, "dialog_name|lock_edit\ntilex|0|\ntiley|0|\ncheckbox_2002|1\nplayerNetID|21\n"), fmt::format("world_moderation: Bob added with the lock's player picker ({})", give.value_or("-")));
+    send(game_server, lock_update({ 2002, 2021 }));
+    check(journal_has("\"Дать доступ\",\"Bob (#2021)\",\"Подтверждено\",\"доступ есть\""), "world_moderation: access given - Подтверждено from the lock itself");
+    std::ignore = panel(http, mod, "take");
+    std::ignore = panel(http, mod, "confirm");
+    check(server_wrench(game_server, 0, 0), "world_moderation: the lock's window asked again");
+    send(game_server, dialog_packet(
+        "add_checkbox|checkbox_2002|Zed|1\nadd_checkbox|checkbox_2021|Bob|1\nadd_player_picker|playerNetID|`wAdd``|\n"
+        "embed_data|tilex|0\nembed_data|tiley|0\nend_dialog|lock_edit|Cancel|OK|\n"));
+    const auto take{ server_text(game_server, "action|dialog_return") };
+    check(contains(take, "checkbox_2002|1\ncheckbox_2021|0\n"), fmt::format("world_moderation: Bob's box unticked, the others kept ({})", take.value_or("-")));
+    send(game_server, lock_update({ 2002 }));
+    check(journal_has("\"Забрать доступ\",\"Bob (#2021)\",\"Подтверждено\",\"доступа больше нет\""), "world_moderation: access taken - Подтверждено");
+
+    // Entry rules: a dry run first, a broken rule keeps the last good ones.
+    const auto settings{ read_app_file("config/modules/world_moderation.json") };
+    write_app_file("config/modules/world_moderation.json",
+        R"({ "rules_enabled": true, "dry_run": true, "rules": "world=SHOPTEST action=ban name=BadGuy", "exceptions": "name=Bob" })");
+    console("cfg reload");
+    check(tab_until(http, mod, [](const std::string& tab) { return has(tab, "Правила входа: включены, только проба (dry run), правил 1."); }).has_value(),
+        "world_moderation: rules on, dry run (cfg reload)");
+    game_server.inbox.clear();
+    spawn(client, game_server, 24, 2024, "BadGuy", 11, 8);
+    check(journal_has("\"Ban\",\"BadGuy (#2024)\",\"Проба (dry run)\""), "world_moderation: BadGuy enters - the dry run only writes it down");
+    check(!wrench_player(game_server, 24, 500ms).has_value(), "world_moderation: nothing sent in a dry run");
+    write_app_file("config/modules/world_moderation.json", R"({ "rules_enabled": true, "dry_run": true, "rules": "world=SHOPTEST action=explode name=x" })");
+    console("cfg reload");
+    check(tab_until(http, mod, [](const std::string& tab) {
+        return has(tab, "config/modules/world_moderation.json: rules: rule 1") && has(tab, "действуют прежние правила") && has(tab, "правил 1.");
+    }).has_value(), "world_moderation: a broken rule is named with its file and field; the last good rules stay");
+    write_app_file("config/modules/world_moderation.json", settings);
+    console("cfg reload");
+    check(tab_until(http, mod, [](const std::string& tab) { return has(tab, "Правила входа: выключены"); }).has_value(), "world_moderation: rules off again");
+    remove_player(game_server, 24, 2024);
+    pump_for(300ms);
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
+void run_autohost_flows(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    const std::string host{ "autohost/autohost" };
+    const std::string pay{ "autohost/payout" };
+    check(contains(game_reply_with(client, game_server, "/win1 100", "Oops"), "point 1 is not set"), "autohost: no payout without point 1");
+    check(contains(game_reply_with(client, game_server, "/host start", "Oops"), "points 1, 2 are needed first"), "autohost: start needs points 1 and 2");
+    check(contains(game_reply_with(client, game_server, "/pos1", "Point 1"), "Point 1 set to `w4, 8`` (zone 3,7 - 5,9)"), "autohost: /pos1 takes your tile, with a zone around it");
+    check(contains(panel(http, host, "pick", "2"), "Щёлкните клетку"), "autohost: point 2 picked on the map");
+    check(contains(click_tile(http, 8, 8, 0), "Точка 2: 8, 8"), "autohost: point 2 at 8, 8");
+    const auto start{ game_reply_with(client, game_server, "/host start", "Hosting") };
+    check(contains(start, "Hosting in SHOPTEST: points 1 at 4,8, 2 at 8,8; commission 10%, down. Nothing is given or moved by starting."),
+        fmt::format("autohost: start shows the world, the points and the commission ({})", start.value_or("-")));
+    pump_for(200ms);
+    check(game_server.inbox.empty(), "autohost: starting sends nothing to the server");
+
+    spawn(client, game_server, 25, 2025, "Eve", 5, 8);
+    send(game_server, inventory_packet({ { 2, 12, 0 }, { 242, 150, 0 } }));
+    pump_for(200ms);
+    const auto win{ game_reply_with(client, game_server, "/win1 100", "Payout") };
+    check(contains(win, "Payout point 1: 100 WL - 10% = `w90 WL``"), fmt::format("autohost: /win1 100 - 90 WL after 10% ({})", win.value_or("-")));
+    check(tab_until(http, pay, [](const std::string& tab) {
+        return has(tab, "Получатель: Eve (#2025)") && has(tab, "100 WL × 10% = 10 → удержано 10, к выплате 90 WL")
+            && has(tab, "комиссия округляется вниз (в пользу игрока)") && has(tab, "Ожидает подтверждения");
+    }).has_value(), "autohost: the payout window - point, receiver, item, amount, commission, held back, paid, rounding rule");
+    game_server.inbox.clear();
+    const auto confirm{ panel(http, pay, "confirm") };
+    check(contains(confirm, "Выплата отправлена"), fmt::format("autohost: confirmed ({})", confirm.value_or("-")));
+    check(server_text(game_server, "action|drop\n|itemID|242\n").has_value(), "autohost: one ordinary drop of World Locks");
+    send(game_server, drop_dialog(242, 150));
+    const auto answer{ server_text(game_server, "action|dialog_return") };
+    check(answer == "action|dialog_return\ndialog_name|drop_item\nitemID|242|\ncount|90\n", fmt::format("autohost: the drop window answered with 90, not all 150 ({})", answer.value_or("-")));
+    send(game_server, object_change(-1, 0, 242, 90, 4, 8));
+    check(tab_until(http, pay, [](const std::string& tab) { return has(tab, "Подтверждено") && has(tab, "на земле 90 WL в 4, 8"); }).has_value(),
+        "autohost: Подтверждено when the 90 WL lie on the ground");
+
+    // Too far from the point: not paid, the way is offered.
+    std::ignore = panel(http, pay, "close");
+    std::ignore = game_reply_with(client, game_server, "/win2 50", "Payout");
+    game_server.inbox.clear();
+    const auto far{ panel(http, pay, "confirm") };
+    check(contains(far, "вы далеко от точки (вы 4, 8; точка 8, 8)") && contains(far, "Идти к точке"), fmt::format("autohost: too far from point 2 - not paid, the way offered ({})", far.value_or("-")));
+    check(!server_text(game_server, "action|drop", 300ms).has_value(), "autohost: nothing dropped when too far");
+    std::ignore = panel(http, pay, "close");
+
+    // Kick everyone in point 1's zone through world_moderation.
+    std::ignore = panel(http, host, "select", "1");
+    const auto plan{ panel(http, host, "mod_kick") };
+    check(contains(plan, "kick: 1 в зоне — подтвердите"), fmt::format("autohost: the players in the zone listed first ({})", plan.value_or("-")));
+    check(tab_until(http, host, [](const std::string& tab) { return has(tab, "Ожидает подтверждения: kick в зоне точки 1 → Eve (#2025)"); }).has_value(),
+        "autohost: who would be kicked is shown");
+    game_server.inbox.clear();
+    std::ignore = panel(http, host, "mod_confirm");
+    check(wrench_player(game_server, 25).has_value(), "autohost: world_moderation asks Eve's window");
+    send(game_server, dialog_packet(player_window(25, { "kick" })));
+    check(server_text(game_server, "action|dialog_return").has_value(), "autohost: Kick pressed");
+    remove_player(game_server, 25, 2025);
+    check(tab_until(http, host, [](const std::string& tab) { return has(tab, "kick в зоне точки 1: Eve: Подтверждено"); }).has_value(),
+        "autohost: the result per player");
+
+    check(contains(game_reply_with(client, game_server, "/host reset", "Again within"), "Again within 15 s to confirm"), "autohost: reset asks first");
+    check(contains(game_reply_with(client, game_server, "/host reset", "cleared"), "Points of SHOPTEST cleared."), "autohost: reset after confirming");
+    check(contains(game_reply_with(client, game_server, "/win1", "Oops"), "point 1 is not set"), "autohost: the points are gone");
+}
+
+void run_stand_flows(Endpoint& client, Endpoint& game_server)
+{
+    httplib::Client http{ "127.0.0.1", MAP_PORT };
+    http.set_connection_timeout(2);
+    http.set_read_timeout(5);
+    client.inbox.clear();
+    game_server.inbox.clear();
+
+    run_finder_flows(client, game_server, http);
+
+    // A new world: nothing of the old one stays.
+    enter_world(client, game_server, http, "SHOPTEST", build_shop_world(), 4, 8);
+    spawn(client, game_server, 20, 2020, "Alice", 8, 8);
+    spawn(client, game_server, 21, 2021, "Bob", 9, 8);
+    check(tab_until(http, "item_finder/items", [](const std::string& tab) { return has(tab, "Цель не выбрана.") && has(tab, "лежит 0"); }).has_value(),
+        "item_finder: a new world - no target, nothing of FINDTEST");
+    check(tab_until(http, "world_scan/scan", [](const std::string& tab) { return has(tab, "Мир SHOPTEST") && !has(tab, "Gems") && has(tab, "кучек 0, всего 0 шт."); }).has_value(),
+        "world_scan: a new world - a new scan, nothing of FINDTEST");
+    check(tab_until(http, "world_scan/journal", [](const std::string& tab) { return has(tab, "мир SHOPTEST · записей 0"); }).has_value(),
+        "world_scan: the journal starts again in the new world");
+
+    run_vending_flows(client, game_server, http);
+    spawn(client, game_server, 20, 2020, "Alice", 8, 8);
+    spawn(client, game_server, 21, 2021, "Bob", 9, 8);
+    run_moderation_flows(client, game_server, http);
+    run_autohost_flows(client, game_server, http);
+
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
 }
 
 int main(const int argc, char** argv)
@@ -2027,6 +2806,11 @@ int main(const int argc, char** argv)
 
     // 8e. Right click: is the target reachable (closed box, opened box).
     run_reach_checks(client, game_server);
+
+    // 8f. Test stand: the five modules of the local test world.
+    if (g_modules) {
+        run_stand_flows(client, game_server);
+    }
 
     // 9. Garbage / truncated / hostile world data must not crash the proxy.
     {

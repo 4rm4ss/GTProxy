@@ -1,0 +1,10 @@
+{
+  "commission_percent": 10,
+  "rounding": "down",
+  "currency": 242,
+  "zone_radius": 1,
+  "near_tiles": 2,
+  "max_drop": 200,
+  "dialog_timeout_ms": 3000,
+  "result_timeout_ms": 4000
+}

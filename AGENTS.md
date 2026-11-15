@@ -75,7 +75,9 @@ src/
 └── utils/          # Utilities (ByteStream, TextParse, hash, random)
 
 modules/            # The proxy's features as Lua modules (drop, worlds, looks, info, walk,
-                    # reachability), copied next to Proxy.exe (docs/modules.md)
+                    # reachability, camera; for a local test world vend_finder, item_finder,
+                    # world_scan, world_moderation, autohost), copied next to Proxy.exe
+                    # (docs/modules.md); their pure helpers are tested in tests/modules/lua/
 config/             # Default module settings and profiles, next to Proxy.exe
                     # (modules keep their own data in data/<id>.json there)
 examples/modules/   # Example modules (not installed)

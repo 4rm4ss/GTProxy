@@ -95,7 +95,8 @@ protected:
 TEST_F(Shipped, AllModulesLoad)
 {
     EXPECT_TRUE(problems.empty());
-    for (const auto* id : { "camera", "drop", "info", "looks", "reachability", "walk", "worlds" }) {
+    for (const auto* id : { "autohost", "camera", "drop", "info", "item_finder", "looks", "reachability", "vend_finder", "walk",
+             "world_moderation", "world_scan", "worlds" }) {
         EXPECT_TRUE(host.loaded(id)) << id;
     }
 
@@ -107,6 +108,9 @@ TEST_F(Shipped, AllModulesLoad)
         "back", "balance", "clickwalk", "daw", "db", "dd", "ddl", "debug", "drop", "dropall", "dw", "exit", "fastdrop",
         "fasttrash", "find", "goto", "inv", "item", "keep", "netid", "nick", "players", "pos", "rainbow", "reach",
         "rejoin", "skin", "walking", "warp", "world", "zoom",
+        // the five modules of the local test world
+        "pvend", "pfind", "growscan", "track", "render", "pos1", "pos2", "pos3", "pos4", "host", "win1", "win2", "win3",
+        "win4", "wm",
     };
     EXPECT_EQ(names, expected);
 
@@ -135,6 +139,50 @@ TEST_F(Shipped, DropModuleItemHelpers)
     test.set_available(modules::discover(dir.path()).modules);
     test.apply(everything_on(test));
     EXPECT_TRUE(test.loaded("drop_items_test")) << "a check failed: see the log above";
+}
+
+// tests/modules/lua/<test> as a module next to a copy of a module's helper:
+// it loads only if every check in it passes.
+bool lua_helper_tests_pass(const std::string& test, const std::string& helper, const std::string& as)
+{
+    TempDir dir{};
+    const auto folder{ dir.path() / "helper_test" };
+    fs::create_directories(folder);
+    std::ofstream{ folder / "module.json" }
+        << R"({ "id": "helper_test", "version": "1.0.0", "api_version": 3, "main": "test.lua" })";
+    fs::copy_file(SOURCE / "tests/modules/lua" / test, folder / "test.lua");
+    fs::copy_file(SOURCE / "modules" / helper, folder / as);
+
+    FakeServices fake{};
+    ModuleHost test_host{ fake };
+    test_host.set_available(modules::discover(dir.path()).modules);
+    test_host.apply(everything_on(test_host));
+    return test_host.loaded("helper_test");
+}
+
+TEST(ShippedHelpers, VendingPrices)
+{
+    EXPECT_TRUE(lua_helper_tests_pass("test_vend_price.lua", "vend_finder/price.lua", "price.lua")) << "a check failed: see the log above";
+}
+
+TEST(ShippedHelpers, ItemFinderChoice)
+{
+    EXPECT_TRUE(lua_helper_tests_pass("test_item_find.lua", "item_finder/find.lua", "find.lua")) << "a check failed: see the log above";
+}
+
+TEST(ShippedHelpers, WorldScanCounts)
+{
+    EXPECT_TRUE(lua_helper_tests_pass("test_world_scan.lua", "world_scan/scan.lua", "scan.lua")) << "a check failed: see the log above";
+}
+
+TEST(ShippedHelpers, ModerationRules)
+{
+    EXPECT_TRUE(lua_helper_tests_pass("test_moderation_rules.lua", "world_moderation/rules.lua", "rules.lua")) << "a check failed: see the log above";
+}
+
+TEST(ShippedHelpers, AutohostPayout)
+{
+    EXPECT_TRUE(lua_helper_tests_pass("test_autohost_payout.lua", "autohost/payout.lua", "payout.lua")) << "a check failed: see the log above";
 }
 
 TEST_F(Shipped, DropAnswersTheServersDialogs)

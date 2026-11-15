@@ -1,0 +1,9 @@
+{
+  "rules_enabled": false,
+  "dry_run": true,
+  "rules": "",
+  "exceptions": "",
+  "window_timeout_ms": 3000,
+  "result_timeout_ms": 4000,
+  "gap_ms": 400
+}

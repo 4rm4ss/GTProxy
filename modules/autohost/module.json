@@ -1,0 +1,19 @@
+{
+  "id": "autohost",
+  "version": "1.0.0",
+  "api_version": 3,
+  "main": "main.lua",
+  "name": "Autohost",
+  "description": "Points 1-4 of your world (/pos1-/pos4 or picked on the map, each with a name and a zone), /host start|stop|reset, payout windows /win1-/win4 (amount, commission, what is paid) paid by one ordinary drop after your confirmation, and pull/kick/ban of the players in a point's zone through world_moderation. Map window tabs \"Автохост\" and \"Выплата\".",
+  "author": "GTProxy",
+  "settings": {
+    "commission_percent": 10,
+    "rounding": "down",
+    "currency": 242,
+    "zone_radius": 1,
+    "near_tiles": 2,
+    "max_drop": 200,
+    "dialog_timeout_ms": 3000,
+    "result_timeout_ms": 4000
+  }
+}

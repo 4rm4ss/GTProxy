@@ -117,7 +117,7 @@ jobs:
           foreach ($m in "HTTPS server listening on port 443", "Proxy server listening on port 16999") {
             if ($log -notmatch [regex]::Escape($m)) { throw "missing log line: $m" }
           }
-          foreach ($id in "camera", "drop", "info", "looks", "reachability", "walk", "worlds") {
+          foreach ($id in "autohost", "camera", "drop", "info", "item_finder", "looks", "reachability", "vend_finder", "walk", "world_moderation", "world_scan", "worlds") {
             if ($log -notmatch "Module '$id' [0-9.]+ loaded from modules/$id") { throw "module $id did not load" }
           }
           $firewall = Select-String -Path $session.FullName -Pattern "Firewall" | ForEach-Object { $_.Line }

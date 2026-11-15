@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <ctime>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
@@ -1134,6 +1135,24 @@ private:
         api.set_function("now", [] {
             return static_cast<lua_Integer>(std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count());
+        });
+        // Wall clock: seconds since 1970 (UTC), and the local date and time
+        // as text, "2026-11-15 18:04:05" (modules have no os library).
+        api.set_function("time", [] {
+            return static_cast<lua_Integer>(std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+        });
+        api.set_function("date", [](const sol::object& when) {
+            const auto seconds{ when.get_type() == sol::type::number
+                ? static_cast<std::time_t>(when.as<double>())
+                : std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) };
+            std::tm local{};
+#ifdef _WIN32
+            localtime_s(&local, &seconds);
+#else
+            localtime_r(&seconds, &local);
+#endif
+            return fmt::format("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", local.tm_year + 1900, local.tm_mon + 1, local.tm_mday, local.tm_hour, local.tm_min, local.tm_sec);
         });
         api.set_function("cancel", [module](const sol::object& id) {
             if (id.get_type() != sol::type::number) {

@@ -24,6 +24,7 @@ add_executable(GTProxy_tests
     packet/test_packet_id.cpp
     packet/test_on_send_to_server.cpp
     packet/test_console_message.cpp
+    packet/test_item_change_object.cpp
     scripting/test_field_binding.cpp
     core/test_certificate.cpp
     core/test_session_log.cpp

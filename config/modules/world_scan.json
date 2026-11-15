@@ -1,0 +1,5 @@
+{
+  "journal_size": 300,
+  "marks_limit": 200,
+  "track_on_start": false
+}

@@ -1,0 +1,13 @@
+{
+  "id": "item_finder",
+  "version": "1.0.0",
+  "api_version": 3,
+  "main": "main.lua",
+  "name": "Item finder",
+  "description": "/pfind <name|ID|any>: the nearest dropped item you can reach (by the way you can walk, not straight distance), marked with its way on the map; any tile picked on the map gets its way too. \"Идти к цели\" walks there when the walk can be proven. Map window tab \"Предметы\".",
+  "author": "GTProxy",
+  "settings": {
+    "walk_gravity": true,
+    "list_limit": 100
+  }
+}

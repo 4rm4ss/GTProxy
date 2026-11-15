@@ -1,12 +1,17 @@
 {
   "profile": "default",
   "modules": {
+    "autohost": { "enabled": true },
     "camera": { "enabled": true },
     "drop": { "enabled": true },
     "info": { "enabled": true },
+    "item_finder": { "enabled": true },
     "looks": { "enabled": true },
     "reachability": { "enabled": true },
+    "vend_finder": { "enabled": true },
     "walk": { "enabled": true },
+    "world_moderation": { "enabled": true },
+    "world_scan": { "enabled": true },
     "worlds": { "enabled": true }
   }
 }

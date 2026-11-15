@@ -1,0 +1,6 @@
+{
+  "presets": "1,10,50",
+  "check_timeout_ms": 3000,
+  "buy_timeout_ms": 5000,
+  "buycount": "items"
+}

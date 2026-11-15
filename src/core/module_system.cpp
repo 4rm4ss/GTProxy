@@ -1224,6 +1224,10 @@ void ModuleSystem::set_overlay(const std::string& module_id, const std::string& 
 {
     const auto key{ module_id + "/" + id };
     if (overlay) {
+        // The same again (modules redraw often): nothing to publish.
+        if (const auto it{ overlays_.find(key) }; it != overlays_.end() && it->second == *overlay) {
+            return;
+        }
         overlays_[key] = *overlay;
     }
     else if (!overlays_.erase(key)) {
@@ -1236,6 +1240,9 @@ void ModuleSystem::set_panel(const std::string& module_id, const std::string& id
 {
     const auto key{ module_id + "/" + id };
     if (json) {
+        if (const auto it{ panels_.find(key) }; it != panels_.end() && it->second == *json) {
+            return;
+        }
         panels_[key] = *json;
     }
     else if (!panels_.erase(key)) {

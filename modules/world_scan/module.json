@@ -1,0 +1,14 @@
+{
+  "id": "world_scan",
+  "version": "1.0.0",
+  "api_version": 3,
+  "main": "main.lua",
+  "name": "World scan",
+  "description": "/growscan: every item of the world with blocks, backgrounds and what lies on the ground (stacks and pieces) counted apart, searchable and sortable, a click shows where; /track: a journal of items dropped, picked up and gone; /render: a PNG of the world. Map window tabs \"Скан мира\" and \"Журнал\".",
+  "author": "GTProxy",
+  "settings": {
+    "journal_size": 300,
+    "marks_limit": 200,
+    "track_on_start": false
+  }
+}
