@@ -41,9 +41,14 @@ public:
         // run and jump along, rising at most jump_height tiles per jump.
         bool gravity{ false };
         int jump_height{ 3 };
-        // Walk through doors and portals that are open to you (public, in an
-        // unlocked world, or under a lock you own or have access to). A door
-        // with a destination still takes you there; the main door never.
+        // Jumps before landing again (gravity paths), 1..1000.
+        int air_jumps{ 1 };
+        // Doors and entrances walks go through: "access" (those open to you:
+        // public, unlocked world, or a lock you own / have access to), "all"
+        // or "none". A door with a destination still takes you there; the
+        // main door (EXIT) never. modules/walk overrides these at run time.
+        std::string doors{ "access" };
+        // Older switch: false = "none".
         bool walk_through_doors{ true };
     };
 

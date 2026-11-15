@@ -15,6 +15,9 @@ struct PathOptions {
     //        straight or diagonally, until you land on something.
     bool gravity{ false };
     int jump_height{ 3 };
+    // Jumps you can make before landing again (wings, double jump ...):
+    // each one adds jump_height to how far you can rise. 1 = a single jump.
+    int air_jumps{ 1 };
     // Search limit, so a far unreachable click can never stall the proxy.
     std::size_t max_expanded{ 1'000'000 };
 };

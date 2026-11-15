@@ -1607,6 +1607,81 @@ void run_without_modules(Endpoint& client, Endpoint& game_server, httplib::Clien
     check(forwarded, "no modules: /reach is not a proxy command (goes to the server)");
 }
 
+// The Walking page of /proxy (modules/walk): its Save writes
+// config/modules/walk.json like a hand edit and the walking engine follows
+// at once; doors and entrances follow the "doors" setting.
+void run_walking_settings_checks(Endpoint& client, Endpoint& game_server, httplib::Client& http)
+{
+    client.inbox.clear();
+    game_server.inbox.clear();
+    const auto walking_page = [&](const std::string& fields, const std::string& button) {
+        send(client, text_packet(packet::NET_MESSAGE_GENERIC_TEXT,
+            "action|dialog_return\ndialog_name|gtproxy_walking\n" + fields + "buttonClicked|" + button + "\n"));
+        WalkLog log{};
+        follow_walk(client, game_server, log, "Walking:", 3000ms);
+        return log;
+    };
+
+    input(client, "/walking");
+    {
+        const auto call{ receive_call(client, "OnDialogRequest") };
+        const std::string dialog{ call ? call->first.get<std::string>(1) : "" };
+        check(
+            dialog.find("end_dialog|gtproxy_walking|") != std::string::npos && dialog.find("add_text_input|speed|") != std::string::npos
+                && dialog.find("add_text_input|air_jumps|") != std::string::npos && dialog.find("add_button|walk_doors_all|") != std::string::npos,
+            "walking: /walking opens the Walking page (speed, jumps in the air, doors)"
+        );
+    }
+
+    {
+        const auto log{ walking_page("speed|900\nstep_ms|50\ngravity|0\njump_height|5\nair_jumps|1000\n", "walk_save") };
+        check(log.said("900 px/s") && log.said("(saved)"), fmt::format("walking: Save on the page answers with the new settings ({})", log.console.empty() ? "-" : log.console.back()));
+        const auto file{ read_app_file("config/modules/walk.json") };
+        check(
+            file.find("\"speed\": 900") != std::string::npos && file.find("\"air_jumps\": 1000") != std::string::npos
+                && file.find("\"step_ms\": 50") != std::string::npos && file.find("\"tell_game\": true") != std::string::npos,
+            fmt::format("walking: the page wrote config/modules/walk.json, other settings kept ({})", file)
+        );
+        check(game_server.inbox.empty(), "walking: the page is not sent to the server");
+    }
+
+    // An entrance in the wall of the closed room: a House Entrance in a
+    // world without a lock lets you through.
+    {
+        utils::ByteStream<> tile{};
+        tile.write<std::uint16_t>(224);     // House Entrance
+        tile.write<std::uint16_t>(14);
+        tile.write<std::uint16_t>(0);
+        tile.write<std::uint16_t>(0);
+        packet::GameUpdatePacket header{};
+        header.type = packet::PACKET_SEND_TILE_UPDATE_DATA;
+        header.int_x = 9;
+        header.int_y = 3;
+        send(game_server, game_packet(header, tile.take_data()));
+        const auto room{ right_click_until(http, 10, 3, [](const std::string& body) { return has(body, "\"reach\":\"reachable\""); }) };
+        check(contains(room, "\"reach\":\"reachable\""), fmt::format("walking: a House Entrance in an unlocked world opens the closed room ({})", room.value_or("-")));
+    }
+
+    {
+        walking_page("", "walk_doors_none");
+        const auto file{ read_app_file("config/modules/walk.json") };
+        check(file.find("\"doors\": \"none\"") != std::string::npos, "walking: the doors buttons write config/modules/walk.json");
+        const auto room{ right_click_until(http, 10, 3, [](const std::string& body) { return has(body, "\"reach\":\"unreachable\""); }) };
+        check(contains(room, "\"reach\":\"unreachable\""), fmt::format("walking: doors none - the room is closed again ({})", room.value_or("-")));
+        const auto walk{ click_tile(http, 10, 3, 0) };
+        check(
+            contains(walk, "the way goes through House Entrance (224) at 9, 3") && contains(walk, "doors: none"),
+            fmt::format("walking: no way - the answer names the entrance that blocks it and why ({})", walk.value_or("-"))
+        );
+    }
+
+    // Back to the defaults for the rest of the session.
+    walking_page("", "walk_doors_access");
+    walking_page("speed|250\nstep_ms|100\ngravity|0\njump_height|3\nair_jumps|1\n", "walk_save");
+    client.inbox.clear();
+    game_server.inbox.clear();
+}
+
 void run_reach_checks(Endpoint& client, Endpoint& game_server)
 {
     httplib::Client http{ "127.0.0.1", MAP_PORT };
@@ -1712,6 +1787,7 @@ void run_reach_checks(Endpoint& client, Endpoint& game_server)
     check(log.states.empty() && log.other_to_server.empty() && log.set_pos.empty(), "reach: checks never move you or send anything");
 
     run_profile_checks(client, game_server, http);
+    run_walking_settings_checks(client, game_server, http);
 
     // E2E_MAP_HOLD_SECONDS=N keeps you in BOXTEST for N seconds, e.g. to try
     // the map window in a browser while the fake server answers.

@@ -10,6 +10,7 @@
 #include "handlers/inventory_handler.hpp"
 #include "handlers/map_handler.hpp"
 #include "handlers/session_handler.hpp"
+#include "wheel_hook.hpp"
 #include "../command/command_handler.hpp"
 #include "../event/event.hpp"
 #include "../modules/api.hpp"
@@ -74,6 +75,10 @@ public:
     modules::WalkView walk_to(map::TilePos tile) override;
     modules::WalkView walk_stop() override;
     [[nodiscard]] bool walking() const override;
+    [[nodiscard]] modules::WalkOptions walk_options() const override;
+    modules::WalkOptions set_walk_options(const modules::WalkOptions& options) override;
+    std::string save_setting(const std::string& module_id, const std::string& key, const modules::SettingValue& value) override;
+    bool capture_wheel(const std::string& module_id, const std::string& mode) override;
 
 private:
     void cfg(const std::vector<std::string>& words);
@@ -114,5 +119,14 @@ private:
     // The map window click being answered.
     bool in_click_{ false };
     std::optional<map::Card> card_;
+
+    // Settings changed (cfg, profile, a module's page): the "settings"
+    // event goes out from the main loop.
+    bool settings_changed_{ false };
+
+    // The mouse wheel over the game, per module that asked for it.
+    WheelHook wheel_;
+    std::map<std::string, std::string> wheel_modes_;
+    void update_wheel();
 };
 }

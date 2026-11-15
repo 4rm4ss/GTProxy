@@ -106,7 +106,7 @@ TEST_F(Shipped, AllModulesLoad)
     const std::set<std::string> expected{
         "back", "balance", "clickwalk", "daw", "db", "dd", "ddl", "debug", "drop", "dropall", "dw", "exit", "fastdrop",
         "fasttrash", "find", "goto", "inv", "item", "keep", "netid", "nick", "players", "pos", "rainbow", "reach",
-        "rejoin", "skin", "warp", "world", "zoom",
+        "rejoin", "skin", "walking", "warp", "world", "zoom",
     };
     EXPECT_EQ(names, expected);
 
@@ -116,7 +116,7 @@ TEST_F(Shipped, AllModulesLoad)
     for (const auto& section : sections) {
         buttons.push_back(section.button);
     }
-    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_items", "page_looks", "page_camera", "page_info" }));
+    EXPECT_EQ(buttons, (std::vector<std::string>{ "page_worlds", "page_walking", "page_items", "page_looks", "page_camera", "page_info" }));
 }
 
 TEST_F(Shipped, DropModuleItemHelpers)
@@ -271,4 +271,55 @@ TEST_F(Shipped, CameraZoomsWithTheGamesOwnCall)
     host.run_command("zoom", { "-1" }, Source::Game);
     EXPECT_TRUE(replied("Usage"));
     EXPECT_EQ(services.calls.size(), 3u);
+}
+
+TEST_F(Shipped, CameraTakesTheWheelAndZoomsWithoutLimits)
+{
+    // At load the camera module asks for the wheel (setting "wheel": "always").
+    ASSERT_FALSE(services.wheel_modes.empty());
+    EXPECT_EQ(services.wheel_modes.front(), "camera:always");
+
+    // Two notches away from you: closer by 1.15 twice; far beyond the game's
+    // own range towards you.
+    const auto wheel = [&](const int notches) {
+        host.emit("wheel", [&](sol::table& event) { event["notches"] = notches; });
+        return std::get<float>(services.calls.back().args[0]);
+    };
+    EXPECT_NEAR(wheel(2), 0.5f * 1.15f * 1.15f, 1e-4);
+    EXPECT_NEAR(wheel(-40), 0.01f, 1e-6);       // stops at min_zoom
+    EXPECT_EQ(std::get<std::int32_t>(services.calls.back().args[1]), 0);
+}
+
+TEST_F(Shipped, WalkingSettingsGoToTheEngineAndToTheConfig)
+{
+    // At load: the settings of config/modules/walk.json (module defaults here).
+    EXPECT_FLOAT_EQ(services.walk_options_.speed, 250.0f);
+    EXPECT_EQ(services.walk_options_.doors, "access");
+    EXPECT_EQ(services.walk_options_.air_jumps, 1);
+
+    // The Walking page's Save: changed values are written like a hand edit.
+    host.emit("dialog", [](sol::table& event) {
+        sol::state_view lua{ event.lua_state() };
+        event["name"] = "gtproxy_walking";
+        event["button"] = "walk_save";
+        event["frame"] = false;
+        event["values"] = lua.create_table_with(
+            "speed", "900", "step_ms", "50", "gravity", "1", "jump_height", "4", "air_jumps", "1000"
+        );
+    });
+    std::ranges::sort(services.saved);
+    EXPECT_EQ(services.saved, (std::vector<std::string>{
+        "walk:air_jumps=1000", "walk:gravity=true", "walk:jump_height=4", "walk:speed=900", "walk:step_ms=50",
+    }));
+    EXPECT_TRUE(std::ranges::any_of(services.dialogs, [](const std::string& d) { return d.find("end_dialog|gtproxy_walking|") != std::string::npos; }));
+
+    services.saved.clear();
+    host.emit("dialog", [](sol::table& event) {
+        sol::state_view lua{ event.lua_state() };
+        event["name"] = "gtproxy_walking";
+        event["button"] = "walk_doors_all";
+        event["frame"] = false;
+        event["values"] = lua.create_table();
+    });
+    EXPECT_EQ(services.saved, (std::vector<std::string>{ "walk:doors=\"all\"" }));
 }

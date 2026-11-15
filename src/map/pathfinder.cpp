@@ -36,8 +36,10 @@ int octile(const TilePos a, const TilePos b)
 // made since leaving the ground, fall = only falling until you land.
 class AirModel {
 public:
-    explicit AirModel(const PathOptions& options)
-        : jump_{ options.gravity ? std::max(options.jump_height, 0) : 0 }
+    // 'ceiling': how high a rise can matter at all (the world's height), so
+    // 1000 jumps do not make the search a thousand times bigger.
+    AirModel(const PathOptions& options, const int ceiling)
+        : jump_{ options.gravity ? std::clamp(std::max(options.jump_height, 0) * std::max(options.air_jumps, 1), 0, std::max(ceiling, 1)) : 0 }
         , gravity_{ options.gravity }
     { }
 
@@ -116,7 +118,7 @@ std::expected<Path, PathError> find_path(
         return std::unexpected{ PathError::GoalBlocked };
     }
 
-    const AirModel air{ options };
+    const AirModel air{ options, grid.size().y + 1 };
     const int width{ grid.size().x };
     const auto states{ static_cast<std::uint32_t>(air.states()) };
     const std::size_t node_count{ grid.cells().size() * states };

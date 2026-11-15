@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -122,6 +123,29 @@ public:
         return { true, "Stopped", std::nullopt };
     }
     [[nodiscard]] bool walking() const override { return walking_; }
+    [[nodiscard]] modules::WalkOptions walk_options() const override { return walk_options_; }
+    modules::WalkOptions set_walk_options(const modules::WalkOptions& options) override
+    {
+        walk_options_ = options;
+        walk_options_.speed = std::min(options.speed, 10000.0f);
+        return walk_options_;
+    }
+
+    std::string save_setting(const std::string& module_id, const std::string& key, const modules::SettingValue& value) override
+    {
+        saved.push_back(module_id + ":" + key + "=" + modules::to_string(value));
+        return {};
+    }
+
+    bool capture_wheel(const std::string& module_id, const std::string& mode) override
+    {
+        wheel_modes.push_back(module_id + ":" + mode);
+        return true;
+    }
+
+    modules::WalkOptions walk_options_{};
+    std::vector<std::string> saved;
+    std::vector<std::string> wheel_modes;
 
     std::vector<map::TilePos> reached;
     std::vector<map::Card> cards;

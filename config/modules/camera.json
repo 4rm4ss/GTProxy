@@ -1,4 +1,9 @@
 {
+  "wheel": "always",
+  "wheel_step": 1.15,
+  "invert": false,
+  "min_zoom": 0.01,
+  "max_zoom": 1000,
   "zoom": 0.5,
   "normal": 1.0,
   "time_ms": 300,

@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -41,15 +43,33 @@ enum class Cell : std::uint8_t {
 // Same, looking the item up in the loaded items.dat.
 [[nodiscard]] Cell classify(const world::Tile& tile);
 
-// Which doors you may walk through. A door is open to you when it is public,
-// when nothing locks it (no lock in the world), or when you own the lock
-// that covers it or are on its access list - as in the game. A door with a
-// destination still takes you there when you walk in; the main door (EXIT)
-// is never walked through.
+// Which doors and entrances (House Entrance, Jail Door, VIP Entrance ...)
+// walks go through.
+enum class DoorMode : std::uint8_t {
+    Access,     // those open to you, as in the game: public, nothing locks
+                // them, or you own the lock over them / are on its access list
+    All,        // every one (you know you may pass); not the main door (EXIT)
+    None,       // doors only as a destination, entrances only when public
+};
+
+// "access", "all", "none"
+[[nodiscard]] std::string_view describe(DoorMode mode);
+[[nodiscard]] std::optional<DoorMode> door_mode(std::string_view text);
+
 struct Doors {
-    bool walk_through{ true };      // config.json map.walk_through_doors
+    DoorMode mode{ DoorMode::Access };
     std::uint32_t user_id{ 0 };     // yours (OnSpawn userID); 0 = not known yet
 };
+
+// Doors and entrances are the foreground items that let some people through
+// and not others; a door with a destination still takes you there when you
+// walk in, and the main door (EXIT) is never walked through.
+[[nodiscard]] bool is_door_or_entrance(const item::ItemInfo& info);
+
+// Why the door or entrance on a tile is closed to you (Doors::mode Access),
+// e.g. "locked by user 1234, you are 5678"; empty when it is open to you or
+// is not one.
+[[nodiscard]] std::string closed_because(const WorldTileMap& tile_map, TilePos tile, const Doors& doors);
 
 // Walkability of a whole world, row by row.
 class Grid {

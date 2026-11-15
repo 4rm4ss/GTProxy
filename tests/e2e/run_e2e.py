@@ -34,6 +34,7 @@ Usage: run_e2e.py <build dir> [ip|hostname]
 """
 import http.client
 import json
+import re
 import os
 import shutil
 import socket
@@ -278,7 +279,7 @@ def check_module_log(log):
           "reachability loaded at start and again after being switched back on")
     check("Module 'whereami' 1.0.0 loaded from modules/whereami" in log, "copied example module whereami loaded")
     for module in ("camera", "drop", "info", "looks", "walk", "worlds"):
-        check(f"Module '{module}' 1.0.0 loaded from modules/{module}" in log, f"shipped module {module} loaded")
+        check(re.search(rf"Module '{module}' [0-9.]+ loaded from modules/{module}", log) is not None, f"shipped module {module} loaded")
     check("Module skipped: modules/badapi: needs module API version 99, this proxy has versions 1 to 2: not loaded" in log,
           "module asking for another API version: logged, not loaded")
     check("Module skipped: modules/zz_reach_copy: id 'reachability' is already used by modules/reachability: not loaded" in log,
@@ -303,6 +304,10 @@ def check_module_log(log):
     check("target 2, 7" not in log, "log_result=false: that check was not logged")
     check("Module 'reachability' unloaded: switched off in config/modules.json" in log, "switching the module off unloads it at once")
     check("Unknown console command 'reach'" in log, "switched off: console 'reach' is gone too")
+    check("config/modules/walk.json: speed = 900 (changed in the game)" in log
+          and "Map: walking at 900 px/s, a step every 50 ms" in log,
+          "Walking page: the change is written to config/modules/walk.json and the walking engine follows")
+    check("doors: none" in log, "Walking page: doors switched to none")
 
 
 def main():

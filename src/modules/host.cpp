@@ -65,6 +65,8 @@ constexpr std::array EVENTS{
     std::string_view{ "inventory" },
     std::string_view{ "object" },
     std::string_view{ "walk_end" },
+    std::string_view{ "settings" },
+    std::string_view{ "wheel" },
 };
 
 constexpr std::array CALLS{
@@ -326,6 +328,7 @@ private:
     static void bind_core(sol::state& lua, sol::table& api, ModuleHost::Loaded* module, Services* services, ModuleApi* self)
     {
         sol::table log{ lua.create_table() };
+        log.set_function("debug", [module](const sol::object& text) { spdlog::debug("[{}] {}", module->manifest.id, as_text(text)); });
         log.set_function("info", [module](const sol::object& text) { spdlog::info("[{}] {}", module->manifest.id, as_text(text)); });
         log.set_function("warn", [module](const sol::object& text) { spdlog::warn("[{}] {}", module->manifest.id, as_text(text)); });
         log.set_function("error", [module](const sol::object& text) { spdlog::error("[{}] {}", module->manifest.id, as_text(text)); });
@@ -364,6 +367,30 @@ private:
             }
             module->commands[name] = ModuleHost::Loaded::Command{ description, run.as<sol::protected_function>() };
             return true;
+        });
+
+        // Changes a setting from the module's page: written to
+        // config/modules/<id>.json. Returns true, or false and why not.
+        api.set_function("save_setting", [module, services](const std::string& key, const sol::object& value) {
+            const auto it{ module->manifest.settings.find(key) };
+            if (it == module->manifest.settings.end()) {
+                throw std::runtime_error{ fmt::format("gtproxy.save_setting: '{}' is not a setting of this module (module.json \"settings\")", key) };
+            }
+            SettingValue setting{};
+            if (std::holds_alternative<bool>(it->second) && value.get_type() == sol::type::boolean) {
+                setting = value.as<bool>();
+            }
+            else if (std::holds_alternative<double>(it->second) && value.get_type() == sol::type::number) {
+                setting = value.as<double>();
+            }
+            else if (std::holds_alternative<std::string>(it->second) && value.get_type() == sol::type::string) {
+                setting = value.as<std::string>();
+            }
+            else {
+                throw std::runtime_error{ fmt::format("gtproxy.save_setting: '{}' must be {}", key, type_name(it->second)) };
+            }
+            const auto problem{ services->save_setting(module->manifest.id, key, setting) };
+            return std::make_tuple(problem.empty(), problem);
         });
 
         api.set_function("setting", [module](sol::this_state state, const std::string& key) {
@@ -602,7 +629,44 @@ private:
         });
         walk.set_function("stop", [services, walk_table](sol::this_state state) { return walk_table(state, services->walk_stop()); });
         walk.set_function("active", [services] { return services->walking(); });
+        // gtproxy.walk.options() -> the settings in force;
+        // gtproxy.walk.options({ speed = 500, ... }) changes those given.
+        walk.set_function("options", [services](sol::this_state state, const sol::object& changes) {
+            auto options{ services->walk_options() };
+            if (changes.get_type() == sol::type::table) {
+                const auto table{ changes.as<sol::table>() };
+                options.speed = static_cast<float>(table.get_or("speed", static_cast<double>(options.speed)));
+                options.step_ms = whole_number(table.get_or("step_ms", static_cast<double>(options.step_ms)), "gtproxy.walk.options: step_ms");
+                options.gravity = table.get_or("gravity", options.gravity);
+                options.jump_height = whole_number(table.get_or("jump_height", static_cast<double>(options.jump_height)), "gtproxy.walk.options: jump_height");
+                options.air_jumps = whole_number(table.get_or("air_jumps", static_cast<double>(options.air_jumps)), "gtproxy.walk.options: air_jumps");
+                options.doors = table.get_or<std::string>("doors", options.doors);
+                if (options.doors != "access" && options.doors != "all" && options.doors != "none") {
+                    throw std::runtime_error{ fmt::format("gtproxy.walk.options: doors '{}' must be \"access\", \"all\" or \"none\"", options.doors) };
+                }
+                options = services->set_walk_options(options);
+            }
+            sol::state_view view_lua{ state };
+            return view_lua.create_table_with(
+                "speed", static_cast<double>(options.speed),
+                "step_ms", options.step_ms,
+                "gravity", options.gravity,
+                "jump_height", options.jump_height,
+                "air_jumps", options.air_jumps,
+                "doors", options.doors
+            );
+        });
         api["walk"] = walk;
+
+        sol::table input{ lua.create_table() };
+        input.set_function("capture_wheel", [module, services](const sol::object& mode) {
+            const std::string value{ mode.get_type() == sol::type::string ? mode.as<std::string>() : (mode.get_type() == sol::type::boolean && mode.as<bool>() ? "always" : "off") };
+            if (value != "off" && value != "always" && value != "ctrl" && value != "shift" && value != "alt") {
+                throw std::runtime_error{ fmt::format("gtproxy.input.capture_wheel: '{}' must be \"off\", \"always\", \"ctrl\", \"shift\" or \"alt\"", value) };
+            }
+            return services->capture_wheel(module->manifest.id, value);
+        });
+        api["input"] = input;
 
         sol::table menu{ lua.create_table() };
         menu.set_function("add", [module](const sol::object& value) {
@@ -863,6 +927,16 @@ void ModuleHost::apply(const Resolved& resolved)
 
     if (changed && on_change_) {
         on_change_();
+    }
+}
+
+void ModuleHost::refresh_settings(const Resolved& resolved)
+{
+    settings_ = resolved.settings;
+    for (auto& module : loaded_) {
+        if (const auto it{ settings_.find(module->manifest.id) }; it != settings_.end()) {
+            module->settings = it->second;
+        }
     }
 }
 

@@ -161,7 +161,7 @@ TEST(MapGridTest, DoorsOpenToYouAreWalkedThrough)
     const world::tile_extra::Lock mine{ 0, 1005, {} };
     const world::tile_extra::Lock theirs{ 0, 2000, { 1005 } };
     const world::tile_extra::Lock stranger{ 0, 2000, { 3000 } };
-    const map::Doors me{ true, 1005 };
+    const map::Doors me{ map::DoorMode::Access, 1005 };
     const auto at_door = [](const WorldTileMap& tile_map, const map::Doors& doors) {
         return map::Grid::from_tile_map(tile_map, doors).at({ 1, 0 });
     };
@@ -180,15 +180,55 @@ TEST(MapGridTest, DoorsOpenToYouAreWalkedThrough)
     EXPECT_EQ(at_door(door_world(12, TileFlag::None, stranger), me), Cell::Door);
     EXPECT_EQ(at_door(door_world(12, TileFlag::Public, stranger), me), Cell::OpenDoor);
     // Who you are is not known yet: a locked door stays closed.
-    EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine), map::Doors{ true, 0 }), Cell::Door);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine), map::Doors{ map::DoorMode::Access, 0 }), Cell::Door);
     // A Small Lock over the door decides, not the world.
     EXPECT_EQ(at_door(door_world(12, TileFlag::None, mine, 202), me), Cell::OpenDoor);
     EXPECT_EQ(at_door(door_world(12, TileFlag::None, stranger, 202), me), Cell::Door);
-    // The main door (EXIT) is never walked through; the option turns it all off.
+    // The main door (EXIT) is never walked through; "none" turns it all off.
     EXPECT_EQ(at_door(door_world(6, TileFlag::None, std::nullopt), me), Cell::Door);
-    EXPECT_EQ(at_door(door_world(12, TileFlag::None, std::nullopt), map::Doors{ false, 1005 }), Cell::Door);
+    EXPECT_EQ(at_door(door_world(12, TileFlag::None, std::nullopt), map::Doors{ map::DoorMode::None, 1005 }), Cell::Door);
 
     EXPECT_TRUE(map::is_passable(Cell::OpenDoor));
     EXPECT_FALSE(map::can_stand_on(Cell::OpenDoor));
+    item::ItemDatabase::instance().clear();
+}
+
+TEST(MapGridTest, EntrancesFollowTheLockToo)
+{
+    if (!load_items_dat()) {
+        GTEST_SKIP() << "resources/items.dat not found";
+    }
+    // 224 House Entrance, 686 Jail Door: entrances (collision "gateway").
+    const auto& items{ item::ItemDatabase::instance() };
+    ASSERT_NE(items.get_item(224), nullptr);
+    EXPECT_EQ(items.get_item(224)->collision_type, item::CollisionType::Gateway) << items.get_item(224)->item_name;
+
+    const world::tile_extra::Lock mine{ 0, 1005, {} };
+    const world::tile_extra::Lock stranger{ 0, 2000, { 3000 } };
+    const map::Doors me{ map::DoorMode::Access, 1005 };
+    const auto at = [](const WorldTileMap& tile_map, const map::Doors& doors) {
+        return map::Grid::from_tile_map(tile_map, doors).at({ 1, 0 });
+    };
+
+    // Your own world: your House Entrance lets you in.
+    EXPECT_EQ(at(door_world(224, TileFlag::None, mine), me), Cell::OpenDoor);
+    EXPECT_EQ(at(door_world(686, TileFlag::None, mine), me), Cell::OpenDoor);
+    // Someone else's: closed (you bump into it), unless public.
+    EXPECT_EQ(at(door_world(224, TileFlag::None, stranger), me), Cell::Solid);
+    EXPECT_EQ(at(door_world(224, TileFlag::Public, stranger), me), Cell::Open);
+    // "all": you know you may pass; "none": entrances only when public.
+    EXPECT_EQ(at(door_world(224, TileFlag::None, stranger), map::Doors{ map::DoorMode::All, 1005 }), Cell::OpenDoor);
+    EXPECT_EQ(at(door_world(12, TileFlag::None, stranger), map::Doors{ map::DoorMode::All, 1005 }), Cell::OpenDoor);
+    EXPECT_EQ(at(door_world(6, TileFlag::None, std::nullopt), map::Doors{ map::DoorMode::All, 1005 }), Cell::Door);
+    EXPECT_EQ(at(door_world(224, TileFlag::None, mine), map::Doors{ map::DoorMode::None, 1005 }), Cell::Solid);
+
+    // Why a door is closed, for the "no way" message.
+    EXPECT_EQ(map::closed_because(door_world(224, TileFlag::None, stranger), { 1, 0 }, me), "it is locked by user 2000 (you are 1005)");
+    EXPECT_EQ(map::closed_because(door_world(224, TileFlag::None, mine), { 1, 0 }, map::Doors{ map::DoorMode::Access, 0 }), "it is locked and your user ID is not known yet");
+    EXPECT_EQ(map::closed_because(door_world(6, TileFlag::None, std::nullopt), { 1, 0 }, me), "it is the world's main door (EXIT)");
+    EXPECT_EQ(map::closed_because(door_world(224, TileFlag::None, mine), { 1, 0 }, me), "");
+
+    EXPECT_EQ(map::door_mode("all"), map::DoorMode::All);
+    EXPECT_FALSE(map::door_mode("open"));
     item::ItemDatabase::instance().clear();
 }

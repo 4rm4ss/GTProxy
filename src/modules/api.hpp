@@ -9,6 +9,7 @@
 #include "../map/card.hpp"
 #include "../map/coords.hpp"
 #include "../packet/packet_variant.hpp"
+#include "settings.hpp"
 
 // What the proxy offers to modules. The Lua side of it is the `gtproxy`
 // table, see docs/modules.md. Version 1: map clicks, world info,
@@ -105,6 +106,16 @@ struct WalkView {
     std::optional<map::TilePos> tile;
 };
 
+// How the proxy walks (core::handlers::MapHandler::Settings).
+struct WalkOptions {
+    float speed{ 250.0f };      // px/s
+    int step_ms{ 100 };
+    bool gravity{ false };
+    int jump_height{ 3 };
+    int air_jumps{ 1 };
+    std::string doors{ "access" };  // access, all, none
+};
+
 // A function call to the game (OnNameChanged, OnChangeSkin ...).
 struct CallOut {
     std::string name;
@@ -152,5 +163,19 @@ public:
     virtual WalkView walk_to(map::TilePos tile) = 0;
     virtual WalkView walk_stop() = 0;
     [[nodiscard]] virtual bool walking() const = 0;
+    [[nodiscard]] virtual WalkOptions walk_options() const = 0;
+    // Applies them (clamped) and returns those in force.
+    virtual WalkOptions set_walk_options(const WalkOptions& options) = 0;
+
+    // API 2: a setting changed from a module's page, written to
+    // config/modules/<id>.json like an edit by hand. Empty when it is in
+    // force, else why not (a broken file, or the active profile sets it).
+    virtual std::string save_setting(const std::string& module_id, const std::string& key, const SettingValue& value) = 0;
+
+    // API 2: the mouse wheel over the game's window, taken from the game and
+    // given to the module ("wheel" event). mode: "off", "always", "ctrl",
+    // "shift", "alt" (only while that key is held). False where the proxy
+    // cannot see the mouse (only on Windows).
+    virtual bool capture_wheel(const std::string& module_id, const std::string& mode) = 0;
 };
 }

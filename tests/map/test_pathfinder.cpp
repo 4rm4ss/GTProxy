@@ -163,6 +163,33 @@ TEST(MapPathfinderTest, ThroughADoorOpenToYou)
     EXPECT_NE(std::ranges::find(*path, TilePos{ 2, 1 }), path->end());
 }
 
+TEST(MapPathfinderTest, AirJumpsRiseHigher)
+{
+    // On top of a pillar 6 tiles high: one jump of 2 tiles (or two) cannot
+    // get there, three jumps in the air can.
+    const auto grid{ grid_from({
+        ".......",
+        "##.....",
+        "##.....",
+        "##.....",
+        "##.....",
+        "##.....",
+        ".......",
+        "#######",
+    }) };
+    map::PathOptions options{};
+    options.gravity = true;
+    options.jump_height = 2;
+    ASSERT_EQ(grid.at({ 1, 0 }), Cell::Open);
+    EXPECT_EQ(map::find_path(grid, { 5, 6 }, { 1, 0 }, options).error(), PathError::NoPath);
+    options.air_jumps = 2;
+    EXPECT_EQ(map::find_path(grid, { 5, 6 }, { 1, 0 }, options).error(), PathError::NoPath);
+    options.air_jumps = 3;
+    EXPECT_TRUE(map::find_path(grid, { 5, 6 }, { 1, 0 }, options).has_value());
+    options.air_jumps = 1000;      // capped at the world's height
+    EXPECT_TRUE(map::find_path(grid, { 5, 6 }, { 1, 0 }, options).has_value());
+}
+
 TEST(MapPathfinderTest, Errors)
 {
     const auto grid{ grid_from({

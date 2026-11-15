@@ -1,3 +1,9 @@
 {
-  "tell_game": true
+  "tell_game": true,
+  "speed": 250,
+  "step_ms": 100,
+  "gravity": false,
+  "jump_height": 3,
+  "air_jumps": 1,
+  "doors": "access"
 }

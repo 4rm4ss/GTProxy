@@ -116,7 +116,7 @@ normal chat.
 | `/find <text>` / `/item <id>` | Search items.dat by name / show an item | info |
 | `/debug player\|world\|tile x y\|objects` | What the proxy knows (players, world, a tile, dropped items) | info |
 | `/skin <code>`, `/rainbow [ms]` | Change your skin colour on your screen | looks |
-| `/zoom <value> [ms]`, `/zoom reset` | Zoom the game camera beyond the mouse wheel's range (the server's own `OnZoomCamera` call, sent to your game only) | camera |
+| mouse wheel over the game, `/zoom <value> [ms]`, `/zoom reset` | Zoom the camera without the game's limits: the proxy takes the wheel over Growtopia's window (Windows) and sends the server's own `OnZoomCamera` call to your game only | camera |
 | `/inv` | Your inventory with item IDs and marks (favourite / worn / keep) | drop |
 | `/dropall` | Drop everything except favourites, worn items and the keep list (asks first; `now`, `stop`, `speed <ms>`) | drop |
 | `/daw` | Drop all locks (World, Diamond, Blue Gem, Black Gem) | drop |
@@ -130,6 +130,7 @@ normal chat.
 | `/goto <x> <y>` | Walk to a tile; `/goto stop` stops | walk |
 | `/reach <x> <y>` | Can you get to that tile from where you stand (as a right click in the map window) | reachability |
 | `/clickwalk` | Toggle: clicking a tile in the game walks there instead of punching | walk |
+| `/walking` | Walking settings: speed, step, gravity, jump height, jumps in the air, doors (the Walking page; saved to `config/modules/walk.json`) | walk |
 
 Drops are the same request and "how many?" answer the game sends when you
 press Drop, one stack at a time, each waiting for the server's reply (with a
@@ -183,7 +184,8 @@ somewhere else (door, respawn, correction) the walk stops at once.
    "step_interval_ms": 100,
    "gravity": false,
    "jump_height": 3,
-   "walk_through_doors": true
+   "air_jumps": 1,
+   "doors": "access"
 }
 ```
 
@@ -191,12 +193,22 @@ somewhere else (door, respawn, correction) the walk stops at once.
 `jump_height` tiles per jump, then falling); the default goes through any free
 tile.
 
-Doors and portals are walked through when they are open to you, as in the
-game: a public door, any door in a world without a lock, or a door under a
-lock you own or have access to (the map draws them with a green frame).
-Other doors and the world's main door (EXIT) are only walked to. A door with
-a destination still takes you there when you step in. `walk_through_doors:
-false` treats every door as a destination only.
+`walk_speed` goes up to 10000 px/s, `step_interval_ms` down to 10,
+`jump_height` up to 200 and `air_jumps` (jumps before landing, gravity paths)
+up to 1000. A Growtopia server decides what it accepts: an official one may
+stop or reject fast walks.
+
+`doors`: `"access"` walks through doors and entrances (House Entrance, Jail
+Door, VIP Entrance ...) open to you, as in the game: public, in a world
+without a lock, or under a lock you own or are on the access list of (the map
+draws them with a green frame); `"all"` through every one (when you know you
+may pass); `"none"` only up to them. The world's main door (EXIT) is only
+walked to; a door with a destination takes you there when you step in. When a
+door is why there is no way, the answer names it and says why.
+
+With the `walk` module (the default) these come from
+`config/modules/walk.json` and the Walking page of `/proxy` (`/walking`),
+which writes that file; `config.json` is used without the module.
 
 ### Modules and profiles
 

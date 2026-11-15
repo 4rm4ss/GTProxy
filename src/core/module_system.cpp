@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include "features.hpp"
+#include "../modules/json.hpp"
 #include "../item/item_database.hpp"
 #include "../map/grid.hpp"
 #include "../map/reachability.hpp"
@@ -77,7 +78,10 @@ ModuleSystem::ModuleSystem(
         return name == "cfg" || name == "help"
             || (registry_.get(name) != nullptr && !chat_commands_.contains(std::string{ name }));
     });
-    host_.set_on_change([this] { sync_commands(); });
+    host_.set_on_change([this] {
+        sync_commands();
+        update_wheel();
+    });
     host_.set_data_dir(data_dir_);
     import_old_settings(app_dir);
 
@@ -321,6 +325,105 @@ void ModuleSystem::on_object(const event::Event& event)
 void ModuleSystem::update()
 {
     host_.update();
+
+    if (std::exchange(settings_changed_, false)) {
+        host_.emit("settings");
+    }
+    for (const auto& turn : wheel_.take()) {
+        host_.emit("wheel", [&](sol::table& event) { event["notches"] = turn.notches; });
+    }
+}
+
+void ModuleSystem::update_wheel()
+{
+    // A module that is no longer loaded lets go of the wheel.
+    std::erase_if(wheel_modes_, [&](const auto& entry) { return !host_.loaded(entry.first); });
+    std::string mode{ "off" };
+    for (const auto& [module, wanted] : wheel_modes_) {
+        if (wanted != "off") {
+            mode = wanted;
+        }
+    }
+    wheel_.set_mode(mode);
+}
+
+bool ModuleSystem::capture_wheel(const std::string& module_id, const std::string& mode)
+{
+    wheel_modes_[module_id] = mode;
+    update_wheel();
+    return WheelHook::available();
+}
+
+modules::WalkOptions ModuleSystem::walk_options() const
+{
+    const auto settings{ map_.settings() };
+    return { settings.speed, settings.step_ms, settings.gravity, settings.jump_height, settings.air_jumps, std::string{ map::describe(settings.doors) } };
+}
+
+modules::WalkOptions ModuleSystem::set_walk_options(const modules::WalkOptions& options)
+{
+    handlers::MapHandler::Settings settings{ map_.settings() };
+    settings.speed = options.speed;
+    settings.step_ms = options.step_ms;
+    settings.gravity = options.gravity;
+    settings.jump_height = options.jump_height;
+    settings.air_jumps = options.air_jumps;
+    settings.doors = map::door_mode(options.doors).value_or(settings.doors);
+    map_.set_settings(settings);
+    return walk_options();
+}
+
+std::string ModuleSystem::save_setting(const std::string& module_id, const std::string& key, const modules::SettingValue& value)
+{
+    // The module's settings file, as you would edit it: other keys kept.
+    const auto file{ config_.dir() / "modules" / (module_id + ".json") };
+    const auto shown{ config_.shown(file) };
+    modules::Settings values;
+    std::error_code ec;
+    if (std::filesystem::exists(file, ec)) {
+        const auto text{ modules::json::read_text(file) };
+        auto parsed{ text ? modules::json::parse<modules::Settings>(*text) : std::unexpected{ std::string{ "cannot be read" } } };
+        if (!parsed) {
+            spdlog::error("Config error: {}: {}", shown, parsed.error());
+            return fmt::format("{} is broken ({}): fix it first", shown, parsed.error());
+        }
+        values = std::move(*parsed);
+    }
+    values[key] = value;
+
+    std::string json;
+    if (glz::write<glz::opts{ .prettify = true }>(values, json)) {
+        return "could not write the settings";
+    }
+    std::filesystem::create_directories(file.parent_path(), ec);
+    {
+        std::ofstream out{ file, std::ios::binary | std::ios::trunc };
+        out << json << '\n';
+        if (!out) {
+            return fmt::format("could not write {}", shown);
+        }
+    }
+    spdlog::info("{}: {} = {} (changed in the game)", shown, key, modules::to_string(value));
+
+    // Work the settings out again for the active profile; no module is
+    // loaded or unloaded (the module asking is running right now).
+    const auto resolved{ config_.resolve(profile_, host_.defaults()) };
+    if (!resolved) {
+        for (const auto& error : resolved.error()) {
+            spdlog::error("Config error: {}: {}", error.file, error.reason);
+        }
+        return fmt::format("saved to {}, but another config file is broken (see the proxy log)", shown);
+    }
+    host_.refresh_settings(*resolved);
+    settings_changed_ = true;
+
+    const auto module{ resolved->settings.find(module_id) };
+    if (module != resolved->settings.end()) {
+        if (const auto it{ module->second.find(key) }; it != module->second.end() && it->second != value) {
+            return fmt::format("saved to {}, but profile '{}' sets {} = {}", shown, profile_, key, modules::to_string(it->second));
+        }
+    }
+    return {};
 }
 
 bool ModuleSystem::run_console(const std::vector<std::string>& words)
@@ -405,6 +508,7 @@ bool ModuleSystem::apply_profile(const std::string& profile, const std::string_v
     enabled_ = resolved->enabled;
     host_.apply(*resolved);
     profile_ = profile;
+    settings_changed_ = true;
     spdlog::info("Profile '{}' applied ({})", profile_, why);
     log_settings();
     return true;

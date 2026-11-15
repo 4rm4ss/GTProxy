@@ -132,6 +132,8 @@ end)
 | `inventory` | `full`, `item`, `removed`, `added`, `count` | The whole inventory arrived (`full`), or one item changed (`count`: how many you have now). |
 | `object` | `change`, `item`, `amount`, `object_id`, `by_me` | A dropped object: `change` -1 = dropped, a netID = that player collected it. |
 | `walk_end` | `message`, `notify` | A walk ended. `notify`: arrived, stopped by the server or a blocked way (not when you left the world or pressed Stop). |
+| `settings` | | The settings in force changed (`cfg reload`, `cfg exec`, or a page saved one): read them again with `gtproxy.setting`. |
+| `wheel` | `notches` | The mouse wheel turned over the game's window while the module holds it (`gtproxy.input.capture_wheel`): `+` away from you, `-` towards you. |
 
 If no module handles a map window click, the window says so. A handler that
 fails is logged and does not stop the others.
@@ -179,6 +181,17 @@ gtproxy.setting("show_steps")   --> true / false / number / text
 Always the value in force (defaults → `config/modules/<id>.json` → profile);
 after `cfg exec` the next call returns the new value. Asking for a setting the
 module does not declare is an error.
+
+```lua
+local ok, why = gtproxy.save_setting("speed", 900)
+```
+
+A module's page changes a setting: it is written to `config/modules/<id>.json`
+(other keys kept) exactly like an edit by hand, and is in force at once - so
+the page and the file never disagree. The value must have the setting's type.
+`ok` is false, with the reason, when the file cannot be written, another config
+file is broken, or the active profile sets that key (then the profile's value
+stays in force). The `settings` event follows.
 
 ### World, players, items
 
@@ -256,14 +269,38 @@ module answers the button in its `dialog` handler).
 local walk = gtproxy.walk.to(x, y)   -- { ok, message, x, y }; a block: walks next to it
 gtproxy.walk.stop()
 gtproxy.walk.active()
+gtproxy.walk.options()               -- { speed, step_ms, gravity, jump_height, air_jumps, doors }
+gtproxy.walk.options({ speed = 900, air_jumps = 10 })   -- changes those given, returns all
 ```
 
 The proxy's walking engine (a path over free tiles, sent as the game's own
-movement at walking speed). Doors and portals open to you are walked through
-(public, in a world without a lock, or under a lock you own or have access
-to; `config.json` `map.walk_through_doors`); a door with a destination takes
-you there when you step in, and the main door (EXIT) is only walked to. The
-`walk_end` event tells how it ended.
+movement). `options`: `speed` px/s (16-10000; the game runs ~250), `step_ms`
+between positions (10-1000), `gravity` (only paths you could run and jump
+along), `jump_height` tiles per jump (1-200), `air_jumps` before landing
+(1-1000; each adds `jump_height`), `doors`: `"access"` - doors and entrances
+(House Entrance, Jail Door, VIP Entrance ...) open to you: public, in a world
+without a lock, or under a lock you own / are on the access list of; `"all"`
+- every one; `"none"` - doors only as a destination. A door with a
+destination takes you there when you step in; the main door (EXIT) is only
+walked to. When there is no way because of a door, the walk's message names
+it and why it counts as closed. Out of range values are clamped. `config.json`
+`"map"` sets them at start; the walk module sets them from its settings.
+
+A Growtopia server decides what it accepts: an official one may stop or
+reject fast walks. The `walk_end` event tells how a walk ended.
+
+### Mouse wheel
+
+```lua
+local available = gtproxy.input.capture_wheel("always")   -- or "ctrl", "shift", "alt", "off"
+gtproxy.on("wheel", function(e) ... e.notches ... end)
+```
+
+While a module holds it, the wheel turned over Growtopia's window (the window
+of `Growtopia.exe`; with `"ctrl"` etc. only while that key is held) never
+reaches the game: the module gets `wheel` events instead. Everything else
+keeps its wheel. Only on Windows (`available` is false elsewhere); the proxy
+sets the hook only while a module holds the wheel.
 
 ### Reachability **(1)**
 
@@ -327,7 +364,7 @@ starts without it and the broken file is kept as `<id>.json.broken`.
 ### Log **(1)**
 
 ```lua
-gtproxy.log.info("text")    -- also .warn and .error; lines start with [<id>]
+gtproxy.log.info("text")    -- also .debug (session log only), .warn and .error; lines start with [<id>]
 ```
 
 ### Limits
@@ -345,20 +382,24 @@ gtproxy.log.info("text")    -- also .warn and .error; lines start with [<id>]
 | `drop` | `/inv`, `/dropall [now\|stop\|speed <ms>]`, `/daw`, `/dd [WL]`, `/dw`, `/ddl`, `/db [amount]`, `/drop <item> [amount]`, `/fastdrop`, `/fasttrash`, `/keep [add\|del] <item>`, `/balance` | Items (inventory, drop all, locks, fast drop/trash, pause) | `dialog_timeout_ms`, `ack_timeout_ms`; your choices in `data/drop.json` |
 | `worlds` | `/warp <world> [door]`, `/back`, `/rejoin`, `/exit` | Worlds (warp, back, recent worlds) | `exit_timeout_ms` |
 | `looks` | `/nick [name]`, `/netid`, `/skin [hex] <code>`, `/rainbow [ms]` | Looks | `rainbow_ms` |
-| `camera` | `/zoom <value> [ms]`, `/zoom reset` | Camera (zoom presets) | `zoom`, `normal`, `time_ms`, `keep`, `keep_delay_ms`; your last value in `data/camera.json` |
+| `camera` | the mouse wheel over the game; `/zoom <value> [ms]`, `/zoom reset` | Camera (wheel mode, step, range, zoom to a value) | `wheel` (`always`/`ctrl`/`shift`/`alt`/`off`), `wheel_step`, `invert`, `min_zoom`, `max_zoom`, `zoom`, `normal`, `time_ms`, `keep`, `keep_delay_ms`; your last zoom in `data/camera.json` |
 | `info` | `/pos`, `/players`, `/world`, `/find <name>`, `/item <id>`, `/debug ...` | Info | |
-| `walk` | `/goto <x> <y>`, `/goto stop`, `/clickwalk`; left click in the map window | | `tell_game` |
+| `walk` | `/goto <x> <y>`, `/goto stop`, `/clickwalk`, `/walking`; left click in the map window | Walking (speed, step, gravity, jump height, jumps in the air, doors) | `speed`, `step_ms`, `gravity`, `jump_height`, `air_jumps`, `doors`, `tell_game` |
 | `reachability` | `/reach <x> <y>` (and `reach x y` in the console); right click in the map window | | `show_marker`, `show_steps`, `log_result` |
 
 The core keeps `/proxy` (the menu frame), `/proxyhelp` (all commands) and
 `/map` (open the map window).
 
-`camera` sends your game the server's own camera call, `OnZoomCamera(zoom,
-time in ms)`, which is not bound to the mouse wheel's range. Which values
-zoom out how far is up to the game client: try the page's presets, and
-`zoom` / `normal` in `config/modules/camera.json` set the values it uses. The
-game resets the camera when you enter a world (with `keep` the module sends
-your value again) and when you turn the mouse wheel.
+Settings changed on a module's page (Walking, Camera) are written to its
+`config/modules/<id>.json`: the page and the file are the same settings.
+
+`camera` takes the mouse wheel over the game's window (`wheel`) and moves the
+camera with the server's own call `OnZoomCamera(zoom, time in ms)`, sent to
+your game only, so the game's zoom limits do not apply: each notch multiplies
+the zoom by `wheel_step` within `min_zoom`..`max_zoom`. If the camera moves the
+wrong way, tick `invert`. With `wheel: "ctrl"` the plain wheel stays the
+game's (for scrolling dialogs). The game resets the camera when you enter a
+world; with `keep` the module sends your zoom again.
 
 `examples/modules/whereami` (not installed) is a short API 1 example to copy
 into `modules/`. Item settings of earlier versions (`gtproxy-settings.txt`)

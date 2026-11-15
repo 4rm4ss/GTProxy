@@ -64,6 +64,23 @@ public:
         [[nodiscard]] std::string summary() const;
     };
 
+    // How walks are made. Set from config.json "map" at start; modules/walk
+    // changes them at run time (its settings and the Walking page of /proxy).
+    struct Settings {
+        float speed{ 250.0f };          // world pixels per second (32 per tile)
+        int step_ms{ 100 };             // a position is sent this often
+        bool gravity{ false };          // only paths you could run and jump along
+        int jump_height{ 3 };           // tiles one jump rises (gravity)
+        int air_jumps{ 1 };             // jumps before landing again (gravity)
+        map::DoorMode doors{ map::DoorMode::Access };
+    };
+    static constexpr float MIN_SPEED{ 16.0f };
+    static constexpr float MAX_SPEED{ 10000.0f };
+    static constexpr int MIN_STEP_MS{ 10 };
+    static constexpr int MAX_STEP_MS{ 1000 };
+    static constexpr int MAX_JUMP_HEIGHT{ 200 };
+    static constexpr int MAX_AIR_JUMPS{ 1000 };
+
     // A click in the map window is answered by the modules: handled tells
     // whether any module listens, card is what one of them showed.
     struct ClickAnswer {
@@ -107,6 +124,14 @@ public:
     Result stop();
 
     [[nodiscard]] bool walking() const { return walk_.has_value(); }
+
+    [[nodiscard]] Settings settings() const;
+    // Applies the settings (clamped to the limits above; a walk in progress
+    // keeps its speed) and returns those in force.
+    Settings set_settings(const Settings& settings);
+    // Why there is no way to a tile when doors are the reason: which door
+    // or entrance blocks it and why it is closed to you. Empty otherwise.
+    [[nodiscard]] std::string blocked_by_door(map::TilePos start, map::TilePos goal);
     // http://127.0.0.1:<port>/ when the window's server runs.
     [[nodiscard]] const std::optional<std::string>& window_url() const { return window_url_; }
 
@@ -126,6 +151,7 @@ private:
 
     [[nodiscard]] Result plan_walk(map::TilePos tile);
     [[nodiscard]] Result module_click(map::MouseButton button, map::TilePos tile);
+    void log_settings() const;
     [[nodiscard]] const map::Grid& grid();
     void mark_tiles_changed();
     void end_walk(const std::string& message, bool tell_game);

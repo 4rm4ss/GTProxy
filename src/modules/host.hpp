@@ -78,6 +78,9 @@ public:
     // Loads the modules switched on, unloads those switched off, and gives
     // every module its settings.
     void apply(const Resolved& resolved);
+    // Only new settings for the loaded modules (no module is loaded or
+    // unloaded): safe while a module's code is running.
+    void refresh_settings(const Resolved& resolved);
 
     [[nodiscard]] bool loaded(std::string_view id) const;
     [[nodiscard]] std::vector<std::string> loaded_ids() const;

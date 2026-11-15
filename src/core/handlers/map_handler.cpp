@@ -17,10 +17,6 @@
 
 namespace core::handlers {
 namespace {
-constexpr float MIN_SPEED{ 16.0f };
-constexpr float MAX_SPEED{ 1000.0f };
-constexpr int MIN_STEP_MS{ 30 };
-constexpr int MAX_STEP_MS{ 1000 };
 // A window counts as open while it polls at least this often.
 constexpr auto WINDOW_TIMEOUT{ std::chrono::seconds{ 5 } };
 constexpr auto PUBLISH_INTERVAL{ std::chrono::milliseconds{ 150 } };
@@ -68,8 +64,13 @@ MapHandler::MapHandler(
     , step_interval_{ std::clamp(config.step_interval_ms, MIN_STEP_MS, MAX_STEP_MS) }
 {
     path_options_.gravity = config.gravity;
-    path_options_.jump_height = std::clamp(config.jump_height, 1, 20);
-    doors_.walk_through = config.walk_through_doors;
+    path_options_.jump_height = std::clamp(config.jump_height, 1, MAX_JUMP_HEIGHT);
+    path_options_.air_jumps = std::clamp(config.air_jumps, 1, MAX_AIR_JUMPS);
+    const auto doors{ map::door_mode(config.doors) };
+    if (!doors) {
+        spdlog::warn("config.json map.doors: '{}' is not access, all or none - using access", config.doors);
+    }
+    doors_.mode = !config.walk_through_doors ? map::DoorMode::None : doors.value_or(map::DoorMode::Access);
 
     const auto listen = [this](const packet::PacketId id, const std::int8_t priority, auto handler) {
         const auto type{ event::packet_event_type(id) };
@@ -98,15 +99,85 @@ MapHandler::MapHandler(
         }));
     }
 
+    log_settings();
+}
+
+void MapHandler::log_settings() const
+{
     spdlog::info(
-        "Map: walking at {} px/s, a step every {} ms, {}, {}",
+        "Map: walking at {} px/s, a step every {} ms, {}, doors: {}",
         walk_speed_,
         step_interval_.count(),
         path_options_.gravity
-            ? fmt::format("on foot (jumps up to {} tiles)", path_options_.jump_height)
+            ? fmt::format("on foot (jumps up to {} tiles, {} jump(s) in the air)", path_options_.jump_height, path_options_.air_jumps)
             : std::string{ "through any free tile" },
-        doors_.walk_through ? "through doors open to you" : "never through doors"
+        map::describe(doors_.mode)
     );
+}
+
+MapHandler::Settings MapHandler::settings() const
+{
+    return Settings{
+        walk_speed_,
+        static_cast<int>(step_interval_.count()),
+        path_options_.gravity,
+        path_options_.jump_height,
+        path_options_.air_jumps,
+        doors_.mode,
+    };
+}
+
+MapHandler::Settings MapHandler::set_settings(const Settings& settings)
+{
+    const auto before{ this->settings() };
+    walk_speed_ = std::clamp(settings.speed, MIN_SPEED, MAX_SPEED);
+    step_interval_ = std::chrono::milliseconds{ std::clamp(settings.step_ms, MIN_STEP_MS, MAX_STEP_MS) };
+    path_options_.gravity = settings.gravity;
+    path_options_.jump_height = std::clamp(settings.jump_height, 1, MAX_JUMP_HEIGHT);
+    path_options_.air_jumps = std::clamp(settings.air_jumps, 1, MAX_AIR_JUMPS);
+    if (doors_.mode != settings.doors) {
+        doors_.mode = settings.doors;
+        mark_tiles_changed();
+    }
+
+    const auto after{ this->settings() };
+    if (after.speed != before.speed || after.step_ms != before.step_ms || after.gravity != before.gravity
+        || after.jump_height != before.jump_height || after.air_jumps != before.air_jumps || after.doors != before.doors) {
+        log_settings();
+    }
+    return after;
+}
+
+std::string MapHandler::blocked_by_door(const map::TilePos start, const map::TilePos goal)
+{
+    if (doors_.mode == map::DoorMode::All) {
+        return {};
+    }
+
+    // Is there a way when every door and entrance is open?
+    const auto& tile_map{ world::World::instance().get_tile_map() };
+    const auto open_grid{ map::Grid::from_tile_map(tile_map, map::Doors{ map::DoorMode::All, doors_.user_id }) };
+    const auto way{ map::find_destination(open_grid, start, goal, path_options_) };
+    if (!way) {
+        return {};
+    }
+
+    const auto& real{ grid() };
+    for (const auto tile : way->path) {
+        if (open_grid.at(tile) != map::Cell::OpenDoor || real.at(tile) == map::Cell::OpenDoor || real.at(tile) == map::Cell::Open) {
+            continue;
+        }
+        const auto* data{ world::World::instance().get_tile(tile.x, tile.y) };
+        const auto reason{ map::closed_because(tile_map, tile, doors_) };
+        return fmt::format(
+            "the way goes through {} at {}, {}, which the proxy counts as closed to you ({}). If you may pass, set doors to \"all\" (/proxy -> Walking, or config/modules/walk.json)",
+            data ? item_label(data->foreground) : std::string{ "a door" },
+            tile.x,
+            tile.y,
+            reason.empty() ? "a door" : reason
+        );
+    }
+    return {};
 }
 
 MapHandler::Result MapHandler::handle_click(const map::Click& click)
@@ -250,7 +321,13 @@ MapHandler::Result MapHandler::plan_walk(const map::TilePos tile)
     const map::TilePos start{ map::player_tile(position) };
     const auto destination{ map::find_destination(walk_grid, start, tile, path_options_) };
     if (!destination) {
-        result.message = fmt::format("Can't walk to {}, {}: {}.", tile.x, tile.y, map::describe(destination.error()));
+        std::string why{ map::describe(destination.error()) };
+        if (destination.error() == map::PathError::NoPath) {
+            if (const auto door{ blocked_by_door(start, tile) }; !door.empty()) {
+                why = door;
+            }
+        }
+        result.message = fmt::format("Can't walk to {}, {}: {}.", tile.x, tile.y, why);
         return result;
     }
 
