@@ -79,7 +79,7 @@ gtproxy.command("reach", "check a tile", function(args, ctx)
     ctx.reply(ctx.source .. " " .. r.message)
 end)
 assert(dofile == nil and loadfile == nil, "no file access")
-assert(gtproxy.api_version == 4)
+assert(gtproxy.api_version == 5)
 assert(gtproxy.module.id == "reach")
 -- Wall clock (modules have no os library).
 assert(math.type(gtproxy.time()) == "integer" and gtproxy.time() > 1700000000)
@@ -571,4 +571,95 @@ TEST(ModuleHostTest, ReadingTheWorldInventoryAndItems)
     host.set_available(dir.manifests());
     host.apply(everything_on(host));
     EXPECT_TRUE(host.loaded("reader"));
+}
+
+// (5) The packet interceptor: a module sees every packet, may change its
+// numbers or text, cancel it, or send one of its own.
+const std::string PACKET_MODULE{ R"(
+seen = {}
+gtproxy.packet.on("game", function(p)
+    seen[#seen + 1] = p.from .. ":" .. p.message .. ":" .. (p.type or "-")
+    if p.text == "action|respawn_spike\n" then
+        return "cancel"
+    end
+    if p.type == "state" and p.flags ~= 0 then
+        p.flags = 0
+        return "replace"
+    end
+end)
+gtproxy.packet.on("server", function(p)
+    if p.call == "OnKilled" then
+        return "cancel"
+    end
+end)
+gtproxy.command("sendit", "send a packet", function()
+    gtproxy.packet.send("game", "\4\0\0\0hello")
+end)
+)" };
+
+TEST(ModuleHostTest, PacketHookSeesChangesAndCancelsPackets)
+{
+    TempModules dir{};
+    dir.add("hook", PACKET_MODULE, "{}");
+    FakeServices services{};
+    ModuleHost host{ services };
+    host.set_available(dir.manifests());
+    host.apply(everything_on(host));
+    ASSERT_TRUE(host.loaded("hook"));
+    EXPECT_TRUE(host.watches_packets());
+
+    // A state report with damage flags: the module clears them.
+    modules::packet_view::View state{};
+    state.message = packet::NET_MESSAGE_GAME_PACKET;
+    state.game_packet = true;
+    state.header.type = packet::PACKET_STATE;
+    state.header.net_id = 5;
+    state.header.flags.value = static_cast<packet::PacketFlag>(0x10040u);
+    state.header.pos_x = 64.0f;
+    ModuleHost::Packet packet{ false, state };
+    auto outcome{ host.packet(packet) };
+    EXPECT_FALSE(outcome.cancelled);
+    EXPECT_TRUE(outcome.replaced);
+    EXPECT_EQ(static_cast<std::uint32_t>(packet.view.header.flags.value), 0u);
+    EXPECT_FLOAT_EQ(packet.view.header.pos_x, 64.0f);
+
+    // The game's death report: cancelled.
+    modules::packet_view::View death{};
+    death.message = packet::NET_MESSAGE_GENERIC_TEXT;
+    death.text = "action|respawn_spike\n";
+    ModuleHost::Packet text_packet{ false, death };
+    EXPECT_TRUE(host.packet(text_packet).cancelled);
+
+    // From the server: OnKilled cancelled, anything else passes.
+    modules::packet_view::View killed{};
+    killed.message = packet::NET_MESSAGE_GAME_PACKET;
+    killed.game_packet = true;
+    killed.header.type = packet::PACKET_CALL_FUNCTION;
+    killed.call = "OnKilled";
+    ModuleHost::Packet from_server{ true, killed };
+    EXPECT_TRUE(host.packet(from_server).cancelled);
+    killed.call = "OnTalkBubble";
+    ModuleHost::Packet other{ true, killed };
+    EXPECT_FALSE(host.packet(other).cancelled);
+
+    // Only the direction it asked for.
+    ModuleHost::Packet state_from_server{ true, state };
+    EXPECT_FALSE(host.packet(state_from_server).replaced);
+
+    host.run_command("sendit", {}, Source::Game);
+    ASSERT_EQ(services.raw_sent.size(), 1u);
+    EXPECT_TRUE(services.raw_sent[0].first);
+    EXPECT_EQ(services.raw_sent[0].second.size(), 9u);
+}
+
+TEST(ModuleHostTest, WithoutAPacketHookTheCoreDoesNoWork)
+{
+    TempModules dir{};
+    dir.add("quiet", "gtproxy.on(\"disconnect\", function() end)", "{}");
+    FakeServices services{};
+    ModuleHost host{ services };
+    host.set_available(dir.manifests());
+    host.apply(everything_on(host));
+    ASSERT_TRUE(host.loaded("quiet"));
+    EXPECT_FALSE(host.watches_packets());
 }

@@ -12,6 +12,7 @@
 #include <sol/sol.hpp>
 
 #include "api.hpp"
+#include "packet_view.hpp"
 #include "manifest.hpp"
 #include "settings.hpp"
 
@@ -108,6 +109,16 @@ public:
 
     // Lets the hooks of a server call see (and change or cancel) it.
     Outcome hook_call(Call& call);
+
+    // (5) Every packet, both ways: modules may read it, change its numbers
+    // or text (outcome.replaced: `view` holds the change) or cancel it.
+    struct Packet {
+        bool from_server{ true };       // server -> game; false: game -> server
+        packet_view::View view;
+    };
+    Outcome packet(Packet& packet);
+    // Is any module watching packets at all (so the core can skip the work)?
+    [[nodiscard]] bool watches_packets() const;
 
     // Runs due timers; called from the main loop.
     void update();

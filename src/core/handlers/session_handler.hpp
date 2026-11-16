@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -45,6 +46,9 @@ public:
     // Sends text to the game server as the game would: GENERIC_TEXT for
     // actions such as "action|drop", GAME_MESSAGE for "action|join_request".
     bool send_text_to_server(const std::string& text, packet::NetMessageType type = packet::NET_MESSAGE_GENERIC_TEXT) const;
+    // Bytes as they are (a packet a module made or changed).
+    bool send_raw_to_client(std::span<const std::byte> data) const;
+    bool send_raw_to_server(std::span<const std::byte> data) const;
     bool send_to_client(const packet::Payload& payload) const;
     bool send_to_server(const packet::Payload& payload) const;
 

@@ -222,6 +222,13 @@ public:
     }
     [[nodiscard]] bool key_down(const std::string_view key) const override { return keys_down.contains(std::string{ key }); }
     [[nodiscard]] bool map_window() const override { return map_window_; }
+    bool send_raw(const bool to_game, const std::span<const std::byte> data) override
+    {
+        raw_sent.emplace_back(to_game, std::vector<std::byte>{ data.begin(), data.end() });
+        return true;
+    }
+
+    std::vector<std::pair<bool, std::vector<std::byte>>> raw_sent;
 
     modules::Abilities abilities_{};
     bool official_{ false };

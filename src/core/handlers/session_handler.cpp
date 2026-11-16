@@ -72,6 +72,16 @@ void SessionHandler::show_dialog(const std::string& markup) const
     std::ignore = send_to_client(dialog.write());
 }
 
+bool SessionHandler::send_raw_to_client(const std::span<const std::byte> data) const
+{
+    return server_.write(data);
+}
+
+bool SessionHandler::send_raw_to_server(const std::span<const std::byte> data) const
+{
+    return client_.write(data);
+}
+
 bool SessionHandler::send_text_to_server(const std::string& text, const packet::NetMessageType type) const
 {
     if (!client_.is_connected()) {

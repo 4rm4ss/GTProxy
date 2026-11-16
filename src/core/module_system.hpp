@@ -97,6 +97,7 @@ public:
     modules::AbilitiesView set_abilities(const modules::Abilities& abilities) override;
     [[nodiscard]] bool key_down(std::string_view key) const override;
     [[nodiscard]] bool map_window() const override;
+    bool send_raw(bool to_game, std::span<const std::byte> data) override;
     void set_map_window(const bool on) { map_window_ = on; }
 
     // The game server of config.json: modules keep data per server and world.
@@ -128,6 +129,8 @@ private:
     [[nodiscard]] std::string answer_panel(const std::map<std::string, std::string>& params);
     // Server texts the game shows (OnConsoleMessage, OnTalkBubble ...).
     void on_raw_client_packet(const event::Event& event);
+    // Every packet, both ways, offered to the modules that watch them.
+    void on_raw_packet(const event::Event& event, bool from_server);
 
     std::filesystem::path modules_dir_;
     std::filesystem::path data_dir_;

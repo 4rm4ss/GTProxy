@@ -481,3 +481,49 @@ TEST_F(Shipped, ModulePagesOpenFromTheMenu)
         EXPECT_TRUE(std::ranges::none_of(services.dialogs.back(), [](const char c) { return static_cast<unsigned char>(c) >= 0x80; })) << page << ": " << services.dialogs.back();
     }
 }
+
+TEST(ShippedHelpers, DamageWatchExampleLoadsAndWatchesPackets)
+{
+    // examples/modules/damage_watch: the packet interceptor in a module.
+    TempDir dir{};
+    fs::create_directories(dir.path() / "damage_watch");
+    for (const auto* file : { "module.json", "main.lua" }) {
+        fs::copy_file(SOURCE / "examples/modules/damage_watch" / file, dir.path() / "damage_watch" / file);
+    }
+
+    FakeServices services{};
+    ModuleHost host{ services };
+    host.set_available(modules::discover(dir.path()).modules);
+    host.apply(everything_on(host));
+    ASSERT_TRUE(host.loaded("damage_watch")) << "see the log above";
+    EXPECT_TRUE(host.watches_packets());
+
+    // Watching only: the damage passes untouched.
+    modules::packet_view::View state{};
+    state.message = packet::NET_MESSAGE_GAME_PACKET;
+    state.game_packet = true;
+    state.header.type = packet::PACKET_STATE;
+    state.header.flags.value = static_cast<packet::PacketFlag>((1u << 6) | (1u << 8));
+    ModuleHost::Packet watching{ false, state };
+    EXPECT_FALSE(host.packet(watching).replaced);
+
+    // "flags": the damage bits are cleared on the way to the server.
+    auto resolved{ everything_on(host) };
+    resolved.settings["damage_watch"]["block"] = std::string{ "flags" };
+    host.refresh_settings(resolved);
+    ModuleHost::Packet blocking{ false, state };
+    const auto outcome{ host.packet(blocking) };
+    EXPECT_TRUE(outcome.replaced);
+    EXPECT_EQ(static_cast<std::uint32_t>(blocking.view.header.flags.value), 0u);
+
+    // "death": the server's OnKilled never reaches the game.
+    resolved.settings["damage_watch"]["block"] = std::string{ "death" };
+    host.refresh_settings(resolved);
+    modules::packet_view::View killed{};
+    killed.message = packet::NET_MESSAGE_GAME_PACKET;
+    killed.game_packet = true;
+    killed.header.type = packet::PACKET_CALL_FUNCTION;
+    killed.call = "OnKilled";
+    ModuleHost::Packet death{ true, killed };
+    EXPECT_TRUE(host.packet(death).cancelled);
+}

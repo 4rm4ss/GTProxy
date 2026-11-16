@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -304,5 +305,9 @@ public:
     [[nodiscard]] virtual bool key_down(std::string_view key) const = 0;
     // The map window is switched on (config.json map.enabled).
     [[nodiscard]] virtual bool map_window() const = 0;
+
+    // API 5: a packet of a module's own making, sent as it is. to_game:
+    // to your game (as if the server sent it), else to the game server.
+    virtual bool send_raw(bool to_game, std::span<const std::byte> data) = 0;
 };
 }

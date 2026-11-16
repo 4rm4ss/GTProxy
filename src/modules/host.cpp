@@ -1064,6 +1064,34 @@ private:
         });
         api["walk"] = walk;
 
+        // (5) Every packet, both ways. The handler gets the packet; it may
+        // change the numbers or the text and return "replace", or "cancel".
+        sol::table packet_api{ lua.create_table() };
+        packet_api.set_function("on", [module](const std::string& direction, const sol::object& handler) {
+            if (direction != "server" && direction != "game" && direction != "both") {
+                throw std::runtime_error{ fmt::format("gtproxy.packet.on: '{}' must be \"server\" (from the server), \"game\" (from your game) or \"both\"", direction) };
+            }
+            if (handler.get_type() != sol::type::function) {
+                throw std::runtime_error{ "gtproxy.packet.on: the handler must be a function" };
+            }
+            const auto fn{ handler.as<sol::protected_function>() };
+            if (direction == "server" || direction == "both") {
+                module->handlers["packet:server"].push_back(fn);
+            }
+            if (direction == "game" || direction == "both") {
+                module->handlers["packet:game"].push_back(fn);
+            }
+        });
+        // Bytes of a packet a module made: gtproxy.packet.send("game"|"server", text)
+        packet_api.set_function("send", [services](const std::string& to, const std::string& bytes) {
+            if (to != "game" && to != "server") {
+                throw std::runtime_error{ fmt::format("gtproxy.packet.send: '{}' must be \"game\" or \"server\"", to) };
+            }
+            const auto* begin{ reinterpret_cast<const std::byte*>(bytes.data()) };
+            return services->send_raw(to == "game", std::span{ begin, bytes.size() });
+        });
+        api["packet"] = packet_api;
+
         sol::table input{ lua.create_table() };
         input.set_function("capture_wheel", [module, services](const sol::object& mode) {
             const std::string value{ mode.get_type() == sol::type::string ? mode.as<std::string>() : (mode.get_type() == sol::type::boolean && mode.as<bool>() ? "always" : "off") };
@@ -1751,6 +1779,101 @@ ModuleHost::Outcome ModuleHost::hook_call(Call& call)
                     spdlog::error("[{}] {} hook: {}; the call goes on unchanged", module->manifest.id, call.name, e.what());
                 }
             }
+        }
+    }
+    return outcome;
+}
+
+bool ModuleHost::watches_packets() const
+{
+    return std::ranges::any_of(loaded_, [](const std::unique_ptr<Loaded>& module) {
+        return module->handlers.contains("packet:server") || module->handlers.contains("packet:game");
+    });
+}
+
+ModuleHost::Outcome ModuleHost::packet(Packet& p)
+{
+    Outcome outcome{};
+    const std::string key{ p.from_server ? "packet:server" : "packet:game" };
+    auto& view{ p.view };
+    for (const auto& module : loaded_) {
+        const auto it{ module->handlers.find(key) };
+        if (it == module->handlers.end()) {
+            continue;
+        }
+        for (const auto& handler : it->second) {
+            sol::state& lua{ module->engine->state() };
+            sol::table table{ lua.create_table() };
+            table["from"] = p.from_server ? "server" : "game";
+            table["message"] = std::string{ packet_view::message_name(view.message) };
+            if (!view.text.empty()) {
+                table["text"] = view.text;
+            }
+            if (view.game_packet) {
+                const auto& h{ view.header };
+                table["type"] = packet_view::type_name(h.type);
+                table["net_id"] = static_cast<std::int32_t>(h.net_id);
+                table["item_net_id"] = h.item_net_id;
+                table["flags"] = static_cast<lua_Integer>(static_cast<std::uint32_t>(h.flags.value));
+                table["float_var"] = static_cast<double>(h.float_var);
+                table["int_data"] = h.int_data;
+                table["pos_x"] = static_cast<double>(h.pos_x);
+                table["pos_y"] = static_cast<double>(h.pos_y);
+                table["pos_x2"] = static_cast<double>(h.pos_x2);
+                table["pos_y2"] = static_cast<double>(h.pos_y2);
+                table["int_x"] = h.int_x;
+                table["int_y"] = h.int_y;
+                table["pad0"] = h.pad[0];
+                table["pad1"] = h.pad[1];
+                table["pad2"] = h.pad[2];
+                if (!view.call.empty()) {
+                    table["call"] = view.call;
+                }
+            }
+
+            ++outcome.ran;
+            const auto result{ call_guarded(*module, handler, "packet handler", table) };
+            if (!result) {
+                continue;
+            }
+            const auto word{ returned_word(*result) };
+            if (word == "cancel") {
+                outcome.cancelled = true;
+                return outcome;
+            }
+            if (word != "replace") {
+                continue;
+            }
+
+            if (view.message == packet::NET_MESSAGE_GENERIC_TEXT || view.message == packet::NET_MESSAGE_GAME_MESSAGE) {
+                view.text = table.get_or<std::string>("text", view.text);
+            }
+            else if (view.game_packet) {
+                auto& h{ view.header };
+                const auto whole = [&](const char* name, const auto current) {
+                    const sol::object value{ table[name] };
+                    using Type = decltype(current);
+                    if (value.get_type() != sol::type::number) {
+                        return current;
+                    }
+                    return static_cast<Type>(value.as<double>());
+                };
+                h.net_id = static_cast<std::uint32_t>(whole("net_id", static_cast<std::int32_t>(h.net_id)));
+                h.item_net_id = whole("item_net_id", h.item_net_id);
+                h.flags.value = static_cast<packet::PacketFlag>(whole("flags", static_cast<std::uint32_t>(h.flags.value)));
+                h.float_var = whole("float_var", h.float_var);
+                h.int_data = whole("int_data", h.int_data);
+                h.pos_x = whole("pos_x", h.pos_x);
+                h.pos_y = whole("pos_y", h.pos_y);
+                h.pos_x2 = whole("pos_x2", h.pos_x2);
+                h.pos_y2 = whole("pos_y2", h.pos_y2);
+                h.int_x = whole("int_x", h.int_x);
+                h.int_y = whole("int_y", h.int_y);
+                h.pad[0] = whole("pad0", h.pad[0]);
+                h.pad[1] = whole("pad1", h.pad[1]);
+                h.pad[2] = whole("pad2", h.pad[2]);
+            }
+            outcome.replaced = true;
         }
     }
     return outcome;

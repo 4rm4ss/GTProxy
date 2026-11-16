@@ -26,6 +26,7 @@
 
 #include "features.hpp"
 #include "../modules/json.hpp"
+#include "../modules/packet_view.hpp"
 #include "../item/item_database.hpp"
 #include "../map/grid.hpp"
 #include "../map/reachability.hpp"
@@ -419,6 +420,14 @@ void ModuleSystem::listen_packets()
         event::Type::ClientBoundPacket, [this](const event::Event& e) { on_raw_client_packet(e); }, event::Priority::Highest
     ));
 
+    // (API 5) Every packet, both ways, before it is passed on.
+    handles_.emplace_back(dispatcher_, event::Type::ClientBoundPacket, dispatcher_.append_listener(
+        event::Type::ClientBoundPacket, [this](const event::Event& e) { on_raw_packet(e, true); }, event::Priority::Highest
+    ));
+    handles_.emplace_back(dispatcher_, event::Type::ServerBoundPacket, dispatcher_.append_listener(
+        event::Type::ServerBoundPacket, [this](const event::Event& e) { on_raw_packet(e, false); }, event::Priority::Highest
+    ));
+
     for (const auto type : { event::Type::ClientDisconnect, event::Type::ServerDisconnect }) {
         handles_.emplace_back(dispatcher_, type, dispatcher_.append_listener(type, [this](const event::Event&) {
             forget_module_view(false);
@@ -546,6 +555,40 @@ void ModuleSystem::on_object(const event::Event& event)
             table["by_name"] = features::strip_colors(by_name);
         }
     });
+}
+
+void ModuleSystem::on_raw_packet(const event::Event& event, const bool from_server)
+{
+    const auto* raw{ dynamic_cast<const event::RawPacketEvent*>(&event) };
+    if (!raw || !host_.watches_packets()) {
+        return;
+    }
+    const auto view{ modules::packet_view::describe(raw->data) };
+    if (!view) {
+        return;
+    }
+
+    modules::ModuleHost::Packet packet{ from_server, *view };
+    const auto outcome{ host_.packet(packet) };
+    if (outcome.cancelled) {
+        spdlog::debug("{} packet kept by a module", from_server ? "Server" : "Game");
+        event.cancel();
+        return;
+    }
+    if (!outcome.replaced) {
+        return;
+    }
+    const auto changed{ modules::packet_view::rebuild(packet.view, raw->data) };
+    event.cancel();
+    std::ignore = send_raw(from_server, changed);
+}
+
+bool ModuleSystem::send_raw(const bool to_game, const std::span<const std::byte> data)
+{
+    if (data.size() < sizeof(std::uint32_t)) {
+        return false;
+    }
+    return to_game ? session_.send_raw_to_client(data) : session_.send_raw_to_server(data);
 }
 
 void ModuleSystem::on_raw_client_packet(const event::Event& event)

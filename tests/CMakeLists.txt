@@ -41,6 +41,7 @@ add_executable(GTProxy_tests
     map/test_reachability.cpp
     modules/test_module_config.cpp
     modules/test_module_host.cpp
+    modules/test_packet_view.cpp
     modules/test_shipped_modules.cpp
     world/test_world_updates.cpp
     ${CMAKE_SOURCE_DIR}/src/item/item_database.cpp
@@ -61,6 +62,7 @@ add_executable(GTProxy_tests
     ${CMAKE_SOURCE_DIR}/src/modules/settings.cpp
     ${CMAKE_SOURCE_DIR}/src/modules/manifest.cpp
     ${CMAKE_SOURCE_DIR}/src/modules/host.cpp
+    ${CMAKE_SOURCE_DIR}/src/modules/packet_view.cpp
     ${CMAKE_SOURCE_DIR}/src/scripting/lua_engine.cpp)
 
 target_include_directories(GTProxy_tests PRIVATE

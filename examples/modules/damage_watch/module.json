@@ -1,0 +1,13 @@
+{
+  "id": "damage_watch",
+  "version": "1.0.0",
+  "api_version": 5,
+  "main": "main.lua",
+  "name": "Damage watch",
+  "description": "Writes every packet around damage and death to the proxy log, and can block them in different ways: /dmg log on|off, /dmg block none|flags|death|all. For working out how your own server kills and revives a player.",
+  "author": "GTProxy",
+  "settings": {
+    "log": true,
+    "block": "none"
+  }
+}

@@ -106,13 +106,13 @@ drop on/off, the keep list ...) it keeps in `data/<id>.json` itself
 Everything a module can use is in the global table `gtproxy`. Modules have the
 Lua standard libraries `string`, `table`, `math`, `utf8`, `coroutine` and the
 base functions (without `dofile`/`loadfile`); `print` writes to the proxy log.
-`gtproxy.api_version` is the proxy's API version (4); `gtproxy.module` holds
+`gtproxy.api_version` is the proxy's API version (5); `gtproxy.module` holds
 `id`, `version` and `name` of the module itself; `gtproxy.prefix` is the chat
 command prefix (`"/"`).
 
-Version 1 is marked **(1)** below, version 3 **(3)**, version 4 **(4)**;
-everything else is version 2. A module needing version 4 says
-`"api_version": 4` in its module.json.
+Version 1 is marked **(1)** below, version 3 **(3)**, version 4 **(4)**,
+version 5 **(5)**; everything else is version 2. A module needing version 5
+says `"api_version": 5` in its module.json.
 
 ### Events
 
@@ -146,6 +146,56 @@ end)
 
 If no module handles a map window click, the window says so. A handler that
 fails is logged and does not stop the others.
+
+### Every packet **(5)**
+
+```lua
+gtproxy.packet.on("server", function(p) ... end)   -- packets from the game server to your game
+gtproxy.packet.on("game", function(p) ... end)     -- packets from your game to the server
+gtproxy.packet.on("both", function(p) ... end)
+```
+
+The handler sees a packet before it is passed on and may **read** it, **change**
+it (set the fields and return `"replace"`) or stop it (`return "cancel"`).
+Every packet goes through, so keep the handler short: look at `p.type` or
+`p.text` first and return at once when it is not yours.
+
+| Field | |
+|-------|-|
+| `p.from` | `"server"` or `"game"` |
+| `p.message` | `"game_packet"`, `"generic_text"`, `"game_message"`, `"hello"`, `"error"`, `"track"`, `"other"` |
+| `p.text` | the text of a text message (`"action|drop\n|itemID|2\n"`) |
+| `p.type` | a game packet's type: `"state"`, `"call_function"`, `"tile_change_request"`, `"set_character_state"`, `"item_change_object"` ... |
+| `p.call` | the function's name for `call_function` (`"OnKilled"`, `"OnSetPos"` ...) |
+| `p.net_id`, `p.item_net_id` | the netIDs the packet carries |
+| `p.flags` | the state bits as a number (damage, jump, respawn ...) |
+| `p.int_data`, `p.float_var` | the item / amount and the float the packet carries |
+| `p.pos_x`, `p.pos_y`, `p.pos_x2`, `p.pos_y2` | positions in world pixels |
+| `p.int_x`, `p.int_y` | the tile |
+| `p.pad0`, `p.pad1`, `p.pad2` | the three bytes after the type (build and punch range in a character state) |
+
+`"replace"` keeps everything not set: the numbers above for a game packet,
+`p.text` for a text message; the rest of the packet (a call's arguments, a
+world's data) is sent again unchanged. To change a call's arguments use
+`gtproxy.hook_call`.
+
+```lua
+-- No damage: the bits the game sets when it is hurt never reach the server.
+local HURT = (1 << 6) | (1 << 8) | (1 << 16) | (1 << 25)
+gtproxy.packet.on("game", function(p)
+    if p.type == "state" and p.flags & HURT ~= 0 then
+        p.flags = p.flags & ~HURT
+        return "replace"
+    end
+end)
+
+gtproxy.packet.send("game", bytes)    -- a packet of your own: "game" (as if the server sent it) or "server"
+```
+
+`examples/modules/damage_watch` is a working example: it writes every packet
+around damage and death to the proxy log and can block them in several ways
+(`/dmg log on|off`, `/dmg block none|flags|death|all`), for working out how
+a server kills and revives a player.
 
 ### Changing what the server tells the game
 
